@@ -101,6 +101,7 @@ class Database:
                 is_blocked INTEGER NOT NULL DEFAULT 0,
                 referred_by INTEGER,
                 referral_activated INTEGER NOT NULL DEFAULT 0,
+                title_id INTEGER,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )""",
@@ -283,6 +284,21 @@ class Database:
                 last_updated TEXT NOT NULL,
                 PRIMARY KEY(user_id, genre)
             )""",
+            """CREATE TABLE IF NOT EXISTS level_config(
+                level_number INTEGER PRIMARY KEY,
+                name TEXT,
+                emoji TEXT,
+                xp_required INTEGER,
+                updated_at TEXT NOT NULL
+            )""",
+            """CREATE TABLE IF NOT EXISTS titles(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                emoji TEXT,
+                min_level INTEGER NOT NULL,
+                description TEXT,
+                created_at TEXT NOT NULL
+            )""",
         ]
         async with self._write_lock:
             for sql in statements:
@@ -306,6 +322,7 @@ class Database:
         await self.add_column_if_missing("users", "streak_last_claim", "streak_last_claim TEXT")
         await self.add_column_if_missing("users", "streak_week_start", "streak_week_start TEXT")
         await self.add_column_if_missing("users", "last_duel_at", "last_duel_at TEXT")
+        await self.add_column_if_missing("users", "title_id", "title_id INTEGER")
         await self.add_column_if_missing("questions", "added_by", "added_by INTEGER")
         await self.add_column_if_missing("questions", "approved", "approved INTEGER NOT NULL DEFAULT 0")
         await self.add_column_if_missing("questions", "approved_by", "approved_by INTEGER")
@@ -356,6 +373,17 @@ class Database:
             "genre_stats_min_answers": ("1", "Minimum answered questions per genre for profile strength/weakness analysis"),
             "payment_card_holder": ("", "Card holder name shown in payment instructions"),
             "reports_channel_id": ("", "Admin reports/log channel id"),
+            "levelup_anim1_step1": ("⬆️ داری لول آپ می‌کنی...", "Level-up animation 1 step 1"),
+            "levelup_anim1_step2": ("⬆️⬆️ داری لول آپ می‌کنی...", "Level-up animation 1 step 2"),
+            "levelup_anim1_step3": ("🎉 لول آپ!\nبه {level_name} رسیدی!\nلول {old_level} ← لول {new_level}", "Level-up animation 1 final"),
+            "levelup_anim2_step1": ("💪 داری قوی‌تر می‌شی...", "Level-up animation 2 step 1"),
+            "levelup_anim2_step2": ("💪💪 داری قوی‌تر می‌شی...", "Level-up animation 2 step 2"),
+            "levelup_anim2_step3": ("🚀 ارتقا!\n{level_name} شدی!\nلول {old_level} ← لول {new_level}", "Level-up animation 2 final"),
+            "rank_change_anim_step1": ("✨ یه اتفاق خاص داره می‌افته...", "Rank/league change animation step 1"),
+            "rank_change_anim_step2": ("✨🌟 یه اتفاق خاص داره می‌افته...", "Rank/league change animation step 2"),
+            "rank_change_anim_step3": ("👑 رتبه‌ات عوض شد!\n{old_rank} ← {new_rank}\nلول {new_level}", "Rank/league change animation final"),
+            "title_anim_step9": ("🎊🎉🎊🎉🎊🎉🎊\n🎉🏆 تبریک! 🏆🎉\n🎊🎉🎊🎉🎊🎉🎊", "New title animation step 9"),
+            "title_anim_step10": ("━━━━━━━━━━━\n🏅 لقب جدید 🏅\n━━━━━━━━━━━\n⚔️ {new_title} ⚔️\n━━━━━━━━━━━\n{level_line}\n{rank_line}", "New title animation final"),
             "daily_question_limit": ("5", "Daily user submissions"),
             "referral_referrer_coins": ("50", "Referrer coin reward"),
             "referral_referrer_xp": ("50", "Referrer XP reward"),
@@ -406,9 +434,21 @@ class Database:
         ranks = [(1, "تازه‌کار"), (5, "دانشجو"), (10, "استاد"), (20, "قهرمان"), (35, "اسطوره"), (70, "افسانه‌ای"), (100, "مکس لول")]
         for min_level, title in ranks:
             await self.execute_write("INSERT OR IGNORE INTO ranks(min_level,title) VALUES(?,?)", (min_level, title))
+        title_count = await self.fetchone("SELECT COUNT(*) c FROM titles")
+        if title_count and title_count["c"] == 0:
+            await self.executemany_write(
+                "INSERT INTO titles(name,emoji,min_level,description,created_at) VALUES(?,?,?,?,?)",
+                [("تازه‌نفس", "🌱", 1, "شروع مسیر", now_iso()), ("شکارچی", "⚔️", 5, "اولین لقب جدی", now_iso()), ("محافظ", "🛡", 10, "بازیکن باتجربه", now_iso()), ("استاد", "👑", 20, "استاد چالش", now_iso())],
+            )
         for i, genre in enumerate(CANONICAL_GENRES):
             await self.execute_write("INSERT OR IGNORE INTO genres(name,is_active,sort_order) VALUES(?,?,?)", (genre, 1, i))
         await self.seed_fixed_leagues()
+
+        for level in range(1, await self.get_int("max_level", 100) + 1):
+            await self.execute_write(
+                "INSERT OR IGNORE INTO level_config(level_number,name,emoji,xp_required,updated_at) VALUES(?,?,?,?,?)",
+                (level, None, None, await self.xp_required_for_level(level), now_iso()),
+            )
         count = await self.fetchone("SELECT COUNT(*) c FROM shop_packages")
         if count and count["c"] == 0:
             await self.executemany_write(
@@ -516,8 +556,36 @@ class Database:
         await self.recalculate_level(tg_id)
 
     async def xp_required_for_level(self, level: int) -> int:
+        try:
+            row = await self.fetchone("SELECT xp_required FROM level_config WHERE level_number=?", (level,))
+            if row and row["xp_required"] is not None:
+                return int(row["xp_required"])
+        except Exception:
+            logger.debug("level_config not ready; using formula", exc_info=True)
         factor = await self.get_int("xp_level_curve_factor", 112)
         return int(factor * max(0, level - 1) ** 2)
+
+    async def get_level_display(self, level: int) -> str:
+        row = await self.fetchone("SELECT name,emoji FROM level_config WHERE level_number=?", (level,))
+        if row and (row["name"] or row["emoji"]):
+            label = f"لول {level}"
+            if row["name"]:
+                label += f" — {row['name']}"
+            if row["emoji"]:
+                label += f" {row['emoji']}"
+            return label
+        return f"لول {level}"
+
+    async def set_level_config(self, level: int, name: str | None, emoji: str | None, xp_required: int | None = None) -> None:
+        if xp_required is None:
+            xp_required = await self.xp_required_for_level(level)
+        await self.execute_write("""INSERT INTO level_config(level_number,name,emoji,xp_required,updated_at)
+                                  VALUES(?,?,?,?,?)
+                                  ON CONFLICT(level_number) DO UPDATE SET name=excluded.name, emoji=excluded.emoji, xp_required=excluded.xp_required, updated_at=excluded.updated_at""",
+                                 (level, name, emoji, xp_required, now_iso()))
+
+    async def level_config_rows(self) -> list[aiosqlite.Row]:
+        return await self.fetchall("SELECT * FROM level_config ORDER BY level_number LIMIT 120")
 
     async def level_bounds(self, level: int) -> tuple[int, int]:
         max_level = await self.get_int("max_level", 100)
@@ -537,6 +605,37 @@ class Database:
                 else:
                     break
             await self.execute_write("UPDATE users SET level=? WHERE telegram_id=?", (level, tg_id))
+
+
+    async def title_for_level(self, level: int) -> aiosqlite.Row | None:
+        return await self.fetchone("SELECT * FROM titles WHERE min_level<=? ORDER BY min_level DESC,id DESC LIMIT 1", (level,))
+
+    async def user_title(self, tg_id: int) -> aiosqlite.Row | None:
+        user = await self.get_user(tg_id)
+        if not user or not user['title_id']:
+            return None
+        return await self.fetchone("SELECT * FROM titles WHERE id=?", (user['title_id'],))
+
+    async def sync_user_title(self, tg_id: int) -> tuple[aiosqlite.Row | None, aiosqlite.Row | None, bool]:
+        user = await self.get_user(tg_id)
+        if not user:
+            return None, None, False
+        old = await self.user_title(tg_id)
+        new = await self.title_for_level(int(user['level']))
+        changed = bool(new and (not old or old['id'] != new['id']))
+        if changed:
+            await self.execute_write("UPDATE users SET title_id=? WHERE telegram_id=?", (new['id'], tg_id))
+        return old, new, changed
+
+    async def titles(self) -> list[aiosqlite.Row]:
+        return await self.fetchall("SELECT * FROM titles ORDER BY min_level,id")
+
+    async def add_title(self, name: str, emoji: str | None, min_level: int, description: str | None) -> int:
+        cur = await self.execute_write("INSERT INTO titles(name,emoji,min_level,description,created_at) VALUES(?,?,?,?,?)", (name, emoji, min_level, description, now_iso()))
+        return int(cur.lastrowid)
+
+    async def delete_title(self, title_id: int) -> None:
+        await self.execute_write("DELETE FROM titles WHERE id=?", (title_id,))
 
     async def get_rank_title(self, level: int) -> str:
         row = await self.fetchone("SELECT title FROM ranks WHERE min_level<=? ORDER BY min_level DESC LIMIT 1", (level,))
@@ -792,7 +891,8 @@ class Database:
         for uid in [p1, p2]:
             u = await self.get_user(uid)
             lg = await self.get_user_league(int(u["cups"] if u else 0))
-            before[uid] = {"level": int(u["level"] if u else 1), "coins": int(u["coins"] if u else 0), "xp": int(u["xp"] if u else 0), "cups": int(u["cups"] if u else 0), "league_id": lg["id"] if lg else None, "league_name": lg["name"] if lg else "بدون لیگ", "league_order": int(lg["sort_order"] if lg else 0)}
+            old_title = await self.user_title(uid)
+            before[uid] = {"level": int(u["level"] if u else 1), "coins": int(u["coins"] if u else 0), "xp": int(u["xp"] if u else 0), "cups": int(u["cups"] if u else 0), "title_id": old_title["id"] if old_title else None, "title_name": ((old_title["emoji"] or "") + " " + old_title["name"]).strip() if old_title else "بدون لقب", "league_id": lg["id"] if lg else None, "league_name": lg["name"] if lg else "بدون لیگ", "league_order": int(lg["sort_order"] if lg else 0)}
         winner = None
         if (stats[p1]["correct"], -stats[p1]["speed"]) > (stats[p2]["correct"], -stats[p2]["speed"]):
             winner = p1
@@ -834,9 +934,11 @@ class Database:
                 await self.execute_write("UPDATE users SET losses=losses+1, last_duel_at=? WHERE telegram_id=?", (now_iso(), uid))
         transitions: dict[int, dict[str, Any]] = {}
         for uid in [p1, p2]:
+            await self.sync_user_title(uid)
             u = await self.get_user(uid)
             lg = await self.get_user_league(int(u["cups"] if u else 0))
-            after = {"level": int(u["level"] if u else 1), "coins": int(u["coins"] if u else 0), "xp": int(u["xp"] if u else 0), "cups": int(u["cups"] if u else 0), "league_id": lg["id"] if lg else None, "league_name": lg["name"] if lg else "بدون لیگ", "league_order": int(lg["sort_order"] if lg else 0)}
+            new_title = await self.user_title(uid)
+            after = {"level": int(u["level"] if u else 1), "coins": int(u["coins"] if u else 0), "xp": int(u["xp"] if u else 0), "cups": int(u["cups"] if u else 0), "title_id": new_title["id"] if new_title else None, "title_name": ((new_title["emoji"] or "") + " " + new_title["name"]).strip() if new_title else "بدون لقب", "league_id": lg["id"] if lg else None, "league_name": lg["name"] if lg else "بدون لیگ", "league_order": int(lg["sort_order"] if lg else 0)}
             transitions[uid] = {
                 "before": before[uid],
                 "after": after,
@@ -844,6 +946,7 @@ class Database:
                 "level_up": after["level"] > before[uid]["level"],
                 "league_promoted": after["league_order"] > before[uid]["league_order"],
                 "league_demoted": after["league_order"] < before[uid]["league_order"],
+                "new_title": after["title_id"] != before[uid].get("title_id"),
             }
         await self.update_genre_stats_for_duel(duel_id)
         await self.clear_other_active_duels_for_users([p1, p2], keep_duel_id=duel_id)

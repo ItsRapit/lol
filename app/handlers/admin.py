@@ -12,10 +12,12 @@ from app.keyboards import (
     admin_leagues_keyboard, admin_league_edit_keyboard, admin_discounts_keyboard,
     discount_kind_keyboard, question_manage_keyboard, question_genres_keyboard, pending_questions_keyboard,
     invalid_questions_confirm_keyboard, review_question_keyboard, question_admin_actions_keyboard,
+    titles_menu_keyboard, animation_preview_keyboard, admin_submenu_keyboard,
 )
-from app.states import AdminFlow, BulkQuestionImport, ShopPackageFlow, LeagueFlow, DiscountFlow, QuestionCleanupFlow
+from app.states import AdminFlow, BulkQuestionImport, ShopPackageFlow, LeagueFlow, DiscountFlow, QuestionCleanupFlow, TitleFlow
 from app.bulk_questions import parse_bulk_questions, format_bulk_report, bulk_help_text, extract_json_text, is_json_balanced, looks_like_json, looks_like_bulk_text
 from app.time_utils import tehran_now, jalali_datetime
+from app.notifications import run_edit_animation, levelup_steps, rankup_steps, title_steps, demotion_steps
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -96,6 +98,30 @@ async def format_question_admin_text(db: Database, qid: int) -> str | None:
         f"📅 تاریخ ثبت: {jalali_datetime(q['created_at'])}\n"
         f"📌 وضعیت: {q['status']}"
     )
+
+
+@router.message(Command("setlevel"))
+async def setlevel_command(message: Message, db: Database) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        raw = (message.text or "").split(maxsplit=2)
+        if len(raw) < 3 or not raw[1].isdigit():
+            await message.answer("فرمت درست:\n<code>/setlevel LEVEL EMOJI NAME | XP</code>\nمثال: <code>/setlevel 5 🗡 شکارچی | 1200</code>")
+            return
+        level = int(raw[1])
+        body = raw[2]
+        left, _, xp_part = body.partition("|")
+        xp_required = int(xp_part.strip()) if xp_part.strip().isdigit() else None
+        parts = left.strip().split(maxsplit=1)
+        emoji = parts[0] if parts else ""
+        name = parts[1] if len(parts) > 1 else ""
+        await db.set_level_config(level, name or None, emoji or None, xp_required)
+        await db.log_admin(message.from_user.id, "setlevel", str(level), body)
+        await message.answer(f"✅ لول {level} ذخیره شد:\n{await db.get_level_display(level)}\nXP لازم: {await db.xp_required_for_level(level)}")
+    except Exception:
+        logger.exception("Set level failed")
+        await message.answer("خطا در تنظیم لول. مثال: /setlevel 5 🗡 شکارچی | 1200")
 
 
 @router.message(Command("question"))
@@ -336,7 +362,40 @@ async def admin_callback(call: CallbackQuery, db: Database, state: FSMContext, b
         await state.clear()
         action = call.data.split(":", 1)[1]
         if action == 'back':
-            await call.message.answer("پنل ادمین:", reply_markup=admin_panel())
+            await call.message.answer("⚙️ پنل مدیریت", reply_markup=admin_panel())
+        elif action == 'user_management':
+            await call.message.answer("👥 مدیریت کاربران", reply_markup=admin_submenu_keyboard('user'))
+        elif action == 'question_management':
+            await call.message.answer("❓ مدیریت سوالات", reply_markup=admin_submenu_keyboard('question'))
+        elif action == 'game_settings':
+            await call.message.answer("🎮 تنظیمات بازی", reply_markup=admin_submenu_keyboard('game'))
+        elif action == 'economy_settings':
+            await call.message.answer("💰 تنظیمات اقتصادی", reply_markup=admin_submenu_keyboard('economy'))
+        elif action == 'league_level_settings':
+            await call.message.answer("🏆 تنظیمات لیگ و لول", reply_markup=admin_submenu_keyboard('league'))
+        elif action == 'notifications':
+            await call.message.answer("📣 اعلان‌ها", reply_markup=admin_submenu_keyboard('notifications'))
+        elif action == 'stats_reports':
+            await call.message.answer("📊 آمار و گزارش", reply_markup=admin_submenu_keyboard('reports'))
+        elif action == 'file_config':
+            await call.message.answer("📁 مدیریت فایل Config", reply_markup=admin_submenu_keyboard('file'))
+        elif action == 'animation_preview':
+            await call.message.answer("🎬 پیش‌نمایش انیمیشن‌ها", reply_markup=animation_preview_keyboard())
+        elif action == 'titles':
+            await call.message.answer("🏅 مدیریت لقب‌ها", reply_markup=titles_menu_keyboard())
+        elif action == 'question_lookup_help':
+            await call.message.answer("برای جستجوی سوال بزن: <code>/question ID</code>")
+        elif action == 'manual_question_help':
+            await call.message.answer("افزودن دستی از منوی کاربر «ثبت سوال» یا Bulk استفاده کن.")
+        elif action == 'upload_backup':
+            await state.set_state(AdminFlow.waiting_backup_upload)
+            await call.message.answer("فایل بک‌آپ را ارسال کن تا روی Volume ذخیره شود.", reply_markup=cancel_keyboard())
+        elif action == 'backup_questions':
+            path = await db.export_section_backup('questions'); await call.message.answer_document(FSInputFile(path), caption='بک‌آپ سوالات')
+        elif action == 'backup_users':
+            path = await db.export_section_backup('users'); await call.message.answer_document(FSInputFile(path), caption='بک‌آپ کاربران')
+        elif action == 'backup_settings':
+            path = await db.export_section_backup('settings'); await call.message.answer_document(FSInputFile(path), caption='بک‌آپ تنظیمات')
         elif action == 'stats':
             s = await db.stats()
             await call.message.answer(
@@ -400,6 +459,16 @@ async def admin_callback(call: CallbackQuery, db: Database, state: FSMContext, b
         elif action == 'start_photo':
             await state.set_state(AdminFlow.waiting_start_photo)
             await call.message.answer("عکس جدید پیام /start را ارسال کنید. برای حذف عکس، متن /remove_photo را بفرستید.", reply_markup=cancel_keyboard())
+        elif action == 'levels':
+            rows = await db.level_config_rows()
+            preview = "\n".join(f"{r['level_number']}. {(r['emoji'] or '')} {(r['name'] or 'لول ' + str(r['level_number']))} | XP: {r['xp_required']}" for r in rows[:30])
+            await call.message.answer(
+                "🎚 مدیریت لول‌ها\n\n"
+                "برای تنظیم نام/ایموجی/XP لازم از کامند زیر استفاده کن:\n"
+                "<code>/setlevel LEVEL EMOJI NAME | XP</code>\n\n"
+                "مثال:\n<code>/setlevel 5 🗡 شکارچی | 1200</code>\n\n"
+                "نمونه لول‌ها:\n" + (preview or "هنوز تنظیمی وجود ندارد.")
+            )
         elif action == 'question_manage':
             await call.message.answer("مدیریت سوالات — یکی از بخش‌ها را انتخاب کن:", reply_markup=question_manage_keyboard())
         elif action == 'question_cleanup':
@@ -1017,3 +1086,119 @@ async def report_ignore_callback(call: CallbackQuery, db: Database) -> None:
     except Exception:
         logger.exception("Report ignore failed")
         await call.answer("خطا", show_alert=True)
+
+
+@router.message(Command("titles"))
+async def titles_command(message: Message, db: Database) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        await message.answer("🏅 مدیریت لقب‌ها", reply_markup=titles_menu_keyboard())
+    except Exception:
+        logger.exception("Titles command failed")
+        await message.answer("خطا در مدیریت لقب‌ها.")
+
+
+@router.callback_query(F.data.startswith("title:"))
+async def title_callback(call: CallbackQuery, db: Database, state: FSMContext) -> None:
+    await call.answer()
+    try:
+        if not await require_admin_call(call, db):
+            return
+        action = call.data.split(":", 1)[1]
+        if action == "add":
+            await state.set_state(TitleFlow.name)
+            await call.message.answer("نام لقب را وارد کن؛ مثال: شکارچی", reply_markup=cancel_keyboard())
+        elif action == "list":
+            rows = await db.titles()
+            text = "📋 لقب‌های تعریف‌شده:\n\n" + ("\n".join(f"#{r['id']} {r['emoji'] or ''} {r['name']} — از لول {r['min_level']}" for r in rows) or "هنوز لقبی تعریف نشده.")
+            await call.message.answer(text, reply_markup=titles_menu_keyboard())
+        elif action == "delete_help":
+            await call.message.answer("برای حذف لقب بزن: <code>/deltitle ID</code>")
+    except Exception:
+        logger.exception("Title callback failed")
+        await call.message.answer("خطا در مدیریت لقب.")
+
+
+@router.message(TitleFlow.name, F.text)
+async def title_name_step(message: Message, db: Database, state: FSMContext) -> None:
+    if not await require_admin_message(message, db):
+        return
+    await state.update_data(title_name=message.text.strip())
+    await state.set_state(TitleFlow.emoji)
+    await message.answer("ایموجی لقب را وارد کن؛ مثال: ⚔️", reply_markup=cancel_keyboard())
+
+
+@router.message(TitleFlow.emoji, F.text)
+async def title_emoji_step(message: Message, db: Database, state: FSMContext) -> None:
+    if not await require_admin_message(message, db):
+        return
+    await state.update_data(title_emoji=message.text.strip())
+    await state.set_state(TitleFlow.min_level)
+    await message.answer("حداقل لول برای دریافت لقب را عددی وارد کن؛ مثال: 5", reply_markup=cancel_keyboard())
+
+
+@router.message(TitleFlow.min_level, F.text)
+async def title_min_level_step(message: Message, db: Database, state: FSMContext) -> None:
+    if not await require_admin_message(message, db):
+        return
+    try:
+        lvl = int(message.text.strip())
+        await state.update_data(title_min_level=lvl)
+        await state.set_state(TitleFlow.description)
+        await message.answer("توضیح کوتاه لقب را وارد کن؛ اگر توضیح نمی‌خواهی 0 بفرست.", reply_markup=cancel_keyboard())
+    except ValueError:
+        await message.answer("لطفاً عدد معتبر وارد کن.")
+
+
+@router.message(TitleFlow.description, F.text)
+async def title_description_step(message: Message, db: Database, state: FSMContext) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        data = await state.get_data()
+        desc = None if message.text.strip() == "0" else message.text.strip()
+        tid = await db.add_title(data['title_name'], data['title_emoji'], int(data['title_min_level']), desc)
+        await db.log_admin(message.from_user.id, "title_add", str(tid))
+        await state.clear()
+        await message.answer(f"✅ لقب #{tid} ساخته شد.", reply_markup=titles_menu_keyboard())
+    except Exception:
+        logger.exception("Title create failed")
+        await message.answer("خطا در ساخت لقب.")
+
+
+@router.message(Command("deltitle"))
+async def delete_title_command(message: Message, db: Database) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        parts = (message.text or "").split()
+        if len(parts) != 2 or not parts[1].isdigit():
+            await message.answer("فرمت درست: /deltitle ID")
+            return
+        await db.delete_title(int(parts[1]))
+        await db.log_admin(message.from_user.id, "title_delete", parts[1])
+        await message.answer("لقب حذف شد.", reply_markup=titles_menu_keyboard())
+    except Exception:
+        logger.exception("Delete title failed")
+        await message.answer("خطا در حذف لقب.")
+
+
+@router.callback_query(F.data.startswith("animprev:"))
+async def animation_preview_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
+    await call.answer()
+    try:
+        if not await require_admin_call(call, db):
+            return
+        kind = call.data.split(":", 1)[1]
+        if kind == "level":
+            await run_edit_animation(bot, call.from_user.id, await levelup_steps(5, 6), 0.6)
+        elif kind == "rank":
+            await run_edit_animation(bot, call.from_user.id, await rankup_steps("🥉 برنزی 3", "🥈 نقره‌ای 1", 5, 6, True), 0.6)
+        elif kind == "title":
+            await run_edit_animation(bot, call.from_user.id, await title_steps(db, "بدون لقب", "⚔️ شکارچی", "🥉 برنزی 3", "🥈 نقره‌ای 1", 5, 6, True, True), 0.6)
+        elif kind == "down":
+            await run_edit_animation(bot, call.from_user.id, await demotion_steps("🥈 نقره‌ای 1", "🥉 برنزی 3"), 0.6)
+    except Exception:
+        logger.exception("Animation preview failed")
+        await call.message.answer("خطا در پیش‌نمایش انیمیشن.")

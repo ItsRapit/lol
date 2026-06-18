@@ -63,3 +63,10 @@ class DiscountFlow(StatesGroup):
 
 class QuestionCleanupFlow(StatesGroup):
     confirm_delete_invalid = State()
+
+
+class TitleFlow(StatesGroup):
+    name = State()
+    emoji = State()
+    min_level = State()
+    description = State()

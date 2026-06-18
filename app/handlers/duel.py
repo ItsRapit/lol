@@ -33,6 +33,7 @@ user_genre_temp: dict[tuple[int, int], set[str]] = {}
 user_offer_temp: dict[tuple[int, int], list[str]] = {}
 hidden_options_temp: dict[tuple[int, int, int], set[int]] = {}
 second_chance_pending: set[tuple[int, int, int]] = set()
+second_chance_question: dict[tuple[int, int], int] = {}
 question_message_ids: dict[tuple[int, int, int], int] = {}
 queue_timeout_tasks: dict[int, asyncio.Task] = {}
 genre_timeout_tasks: dict[tuple[int, int], asyncio.Task] = {}
@@ -47,6 +48,13 @@ def progress_bar(remaining: int, total: int) -> str:
     return "█" * filled + "░" * (10 - filled)
 
 
+async def safe_edit_reply_markup(message, reply_markup) -> None:
+    try:
+        await message.edit_reply_markup(reply_markup=reply_markup)
+    except Exception:
+        logger.exception("Safe edit reply markup failed")
+
+
 async def visual_timer_task(bot: Bot, db: Database, chat_id: int, message_id: int, base_text: str, total: int, interval: int, duel_id: int, qid: int, options: list[str]) -> None:
     try:
         for remaining in range(max(0, total - interval), -1, -interval):
@@ -56,7 +64,9 @@ async def visual_timer_task(bot: Bot, db: Database, chat_id: int, message_id: in
                     return
                 costs = await db.powerup_costs_for_user(duel_id, chat_id)
                 hidden = hidden_options_temp.get((duel_id, chat_id, qid), set())
-                markup = question_keyboard(duel_id, qid, options, hidden, cost_remove2=costs['remove2'], cost_second=costs['second'])
+                remove_cost = 0 if await db.has_powerup(duel_id, qid, chat_id, 'remove2') else costs['remove2']
+                second_cost = 0 if await db.has_powerup(duel_id, qid, chat_id, 'second') else costs['second']
+                markup = question_keyboard(duel_id, qid, options, hidden, cost_remove2=remove_cost, cost_second=second_cost)
                 await bot.edit_message_text(
                     f"{base_text}\n\n⏱ [{progress_bar(remaining, total)}] {remaining}s",
                     chat_id=chat_id,
@@ -480,11 +490,19 @@ async def answer_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
         pending_key = (duel_id, call.from_user.id, qid)
         correct_text = options_from_question(q)[q['correct_option'] - 1]
         explanation = f"\n\n{q['explanation']}" if 'explanation' in q.keys() and q['explanation'] else ""
-        if opt != q['correct_option'] and pending_key not in second_chance_pending and await db.has_powerup(duel_id, qid, call.from_user.id, 'second'):
+        if opt != q['correct_option'] and pending_key not in second_chance_pending and second_chance_question.get((duel_id, call.from_user.id)) == qid:
             second_chance_pending.add(pending_key)
+            user_timer = rt.visual_tasks.pop((call.from_user.id, qid), None)
+            if user_timer and not user_timer.done():
+                user_timer.cancel()
+            hidden_options_temp[pending_key] = set(hidden_options_temp.get(pending_key, set())) | {opt}
             costs = await db.powerup_costs_for_user(duel_id, call.from_user.id)
-            await call.message.edit_reply_markup(reply_markup=question_keyboard(duel_id, qid, options_from_question(q), hidden_options_temp.get(pending_key, set()), cost_remove2=costs['remove2'], cost_second=costs['second']))
-            await call.message.answer("❌ اشتباه! ولی شانس دوباره داری...\n🔄 یه بار دیگه امتحان کن:")
+            retry_text = f"سوال {duel['current_index'] + 1}\nID: <code>{qid}</code>\n\n{q['text']}\n\n❌ این گزینه اشتباه بود!\n🔄 یک فرصت دیگه داری — دوباره انتخاب کن:"
+            try:
+                await call.message.edit_text(retry_text, reply_markup=question_keyboard(duel_id, qid, options_from_question(q), hidden_options_temp.get(pending_key, set()), cost_remove2=costs['remove2'], cost_second=0))
+            except Exception:
+                logger.exception("Second chance edit failed")
+                await call.message.answer(retry_text, reply_markup=question_keyboard(duel_id, qid, options_from_question(q), hidden_options_temp.get(pending_key, set()), cost_remove2=costs['remove2'], cost_second=0))
             await call.answer()
             return
         attempt = 2 if pending_key in second_chance_pending else 1
@@ -589,6 +607,9 @@ async def finish_and_notify(duel_id: int, db: Database, bot: Bot) -> None:
     for key in list(second_chance_pending):
         if key[0] == duel_id:
             second_chance_pending.discard(key)
+    for key in list(second_chance_question.keys()):
+        if key[0] == duel_id:
+            second_chance_question.pop(key, None)
     for key in list(question_message_ids.keys()):
         if key[0] == duel_id:
             question_message_ids.pop(key, None)
@@ -600,40 +621,55 @@ async def finish_and_notify(duel_id: int, db: Database, bot: Bot) -> None:
 
 @router.callback_query(F.data.startswith("power:"))
 async def powerup_callback(call: CallbackQuery, db: Database) -> None:
+    await call.answer("⏳ در حال اعمال پاورآپ...", show_alert=False)
     try:
         _, ptype, duel_s, qid_s = call.data.split(":")
         duel_id, qid = int(duel_s), int(qid_s)
-        costs = await db.powerup_costs_for_user(duel_id, call.from_user.id)
         if ptype not in {'remove2', 'second'}:
-            await call.answer("این پاورآپ دیگر فعال نیست.", show_alert=True); return
+            await call.message.answer("این پاورآپ دیگر فعال نیست.")
+            return
+        costs = await db.powerup_costs_for_user(duel_id, call.from_user.id)
         cost = costs['remove2'] if ptype == 'remove2' else costs['second']
         user = await db.get_user(call.from_user.id)
         q = await db.fetchone("SELECT * FROM questions WHERE id=?", (qid,))
         if not user or not q:
-            await call.answer("نامعتبر", show_alert=True); return
+            await call.message.answer("پاورآپ نامعتبر است.")
+            return
+        if await db.has_answered(duel_id, qid, call.from_user.id):
+            await call.message.answer("بعد از پاسخ دادن نمی‌توانی پاورآپ فعال کنی.")
+            return
         if user['coins'] < cost:
-            await call.answer(f"سکه کافی نداری. هزینه فعلی: {cost} سکه", show_alert=True); return
+            await call.message.answer(f"سکه کافی نداری. هزینه فعلی: {cost} سکه")
+            return
         if await db.has_powerup(duel_id, qid, call.from_user.id, ptype):
-            await call.answer("این پاورآپ را در این دوئل قبلاً استفاده کرده‌ای.", show_alert=True); return
+            await call.message.answer("این پاورآپ را در این دوئل قبلاً استفاده کرده‌ای.")
+            return
         ok = await db.mark_powerup(duel_id, qid, call.from_user.id, ptype)
         if not ok:
-            await call.answer("امکان استفاده نیست.", show_alert=True); return
+            await call.message.answer("امکان استفاده از این پاورآپ نیست.")
+            return
         await db.change_coins(call.from_user.id, -cost, f"powerup_{ptype}", duel_id)
-        wrong = [i for i in range(1,5) if i != q['correct_option']]
-        new_costs = await db.powerup_costs_for_user(duel_id, call.from_user.id)
+        wrong = [i for i in range(1, 5) if i != q['correct_option']]
         hidden_key = (duel_id, call.from_user.id, qid)
+        new_costs = await db.powerup_costs_for_user(duel_id, call.from_user.id)
         if ptype == 'remove2':
             hidden = set(random.sample(wrong, 2))
             hidden_options_temp[hidden_key] = hidden
-            asyncio.create_task(call.message.edit_reply_markup(reply_markup=question_keyboard(duel_id, qid, options_from_question(q), hidden, cost_remove2=0, cost_second=new_costs['second'])))
-            await call.answer(f"دو گزینه حذف شد. هزینه: {cost} سکه", show_alert=True)
+            markup = question_keyboard(duel_id, qid, options_from_question(q), hidden, cost_remove2=0, cost_second=new_costs['second'])
+            asyncio.create_task(safe_edit_reply_markup(call.message, markup))
+            await call.message.answer(f"✅ خرید موفق!\n🪙 {cost} سکه کسر شد.\n🔪 دو گزینه حذف شد.")
         else:
+            second_chance_question[(duel_id, call.from_user.id)] = qid
             hidden = hidden_options_temp.get(hidden_key, set())
-            asyncio.create_task(call.message.edit_reply_markup(reply_markup=question_keyboard(duel_id, qid, options_from_question(q), hidden, cost_remove2=new_costs['remove2'], cost_second=0)))
-            await call.answer(f"شانس دوباره فعال شد. اگر اشتباه بزنی یک بار دیگر می‌توانی جواب بدهی. هزینه: {cost} سکه", show_alert=True)
+            markup = question_keyboard(duel_id, qid, options_from_question(q), hidden, cost_remove2=new_costs['remove2'], cost_second=0)
+            asyncio.create_task(safe_edit_reply_markup(call.message, markup))
+            await call.message.answer(f"✅ خرید موفق!\n🪙 {cost} سکه کسر شد.\n🔄 شانس دوباره برای همین سوال فعال شد.")
     except Exception:
         logger.exception("Powerup failed")
-        await call.answer("خطا", show_alert=True)
+        try:
+            await call.message.answer("خطا در فعال‌سازی پاورآپ.")
+        except Exception:
+            logger.exception("Powerup error notify failed")
 
 
 @router.callback_query(F.data.startswith("report:"))

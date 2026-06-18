@@ -125,17 +125,18 @@ def review_question_keyboard(qid: int) -> InlineKeyboardMarkup:
 def admin_panel() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     for text, data in [
-        ("📊 آمار", "admin:stats"), ("⚙️ تنظیمات", "admin:settings"),
-        ("👤 جستجوی کاربر", "admin:user_search"), ("➕ ادمین", "admin:add_admin"),
-        ("➖ حذف ادمین", "admin:remove_admin"), ("💾 بک‌آپ", "admin:backup"),
-        ("📥 افزودن Bulk سوال", "admin:bulk_questions"), ("🛒 مدیریت فروشگاه", "admin:shop_manage"),
-        ("🎟 کدهای تخفیف", "admin:discounts"), ("🏆 مدیریت لیگ/تیر", "admin:leagues"),
-        ("🛠 تغییر حالت تعمیر", "admin:maintenance_toggle"), ("🖼 عکس استارت", "admin:start_photo"),
-        ("❓ مدیریت سوالات", "admin:question_manage"),
-        ("🧹 پاکسازی ژانر نامعتبر", "admin:question_cleanup"),
+        ("👥 مدیریت کاربران", "admin:user_management"),
+        ("❓ مدیریت سوالات", "admin:question_management"),
+        ("🎮 تنظیمات بازی", "admin:game_settings"),
+        ("💰 تنظیمات اقتصادی", "admin:economy_settings"),
+        ("🏆 تنظیمات لیگ و لول", "admin:league_level_settings"),
+        ("📣 اعلان‌ها", "admin:notifications"),
+        ("📊 آمار و گزارش", "admin:stats_reports"),
+        ("🎬 پیش‌نمایش انیمیشن‌ها", "admin:animation_preview"),
+        ("📁 مدیریت فایل Config", "admin:file_config"),
     ]:
         b.button(text=text, callback_data=data)
-    b.adjust(2)
+    b.adjust(1)
     return b.as_markup()
 
 
@@ -328,4 +329,44 @@ def question_admin_actions_keyboard(qid: int) -> InlineKeyboardMarkup:
 def result_report_keyboard(duel_id: int, qid: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="⚠️ گزارش مشکل سوال", callback_data=f"issue_report:{duel_id}:{qid}")
+    return b.as_markup()
+
+
+def titles_menu_keyboard() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="➕ لقب جدید", callback_data="title:add")
+    b.button(text="📋 لیست لقب‌ها", callback_data="title:list")
+    b.button(text="🗑 حذف لقب", callback_data="title:delete_help")
+    b.button(text="🔙 بازگشت", callback_data="admin:league_level_settings")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def animation_preview_keyboard() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="🎬 لول‌آپ ساده — متن A/B", callback_data="animprev:level")
+    b.button(text="🎬 رنک‌آپ", callback_data="animprev:rank")
+    b.button(text="🎬 لقب جدید", callback_data="animprev:title")
+    b.button(text="🎬 لیگ‌داون", callback_data="animprev:down")
+    b.button(text="🔙 بازگشت", callback_data="admin:back")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_submenu_keyboard(kind: str) -> InlineKeyboardMarkup:
+    menus = {
+        "user": [("🔍 جستجوی کاربر", "admin:user_search"), ("🪙 تغییر موجودی کاربر", "admin:user_search"), ("🚫 بن/آنبن کاربر", "admin:user_search"), ("👑 مدیریت ادمین‌ها", "admin:add_admin")],
+        "question": [("📋 سوالات در انتظار تأیید", "qadmin_mode:pending"), ("🔍 جستجوی سوال با ID", "admin:question_lookup_help"), ("➕ افزودن سوال دستی", "admin:manual_question_help"), ("📤 آپلود Bulk سوال", "admin:bulk_questions"), ("⚠️ سوالات گزارش‌شده", "admin:question_cleanup")],
+        "game": [("⏱ تایمر سوال", "admin:settings"), ("🎲 هزینه دوئل شانسی", "admin:settings"), ("🔋 تنظیمات پاورآپ‌ها", "admin:settings"), ("📦 تنظیمات جعبه سوال گروهی", "admin:settings"), ("⚔️ تنظیمات دوئل", "admin:settings")],
+        "economy": [("🪙 سکه‌ی اولیه ثبت‌نام", "admin:settings"), ("🎁 جوایز دوئل", "admin:settings"), ("👥 جوایز رفرال", "admin:settings"), ("💎 بسته‌های جم", "admin:shop_manage"), ("🛒 آیتم‌های فروشگاه", "admin:shop_manage")],
+        "league": [("📊 مدیریت لول‌ها", "admin:levels"), ("🏅 مدیریت لقب‌ها", "admin:titles"), ("🏆 مدیریت لیگ‌ها", "admin:leagues"), ("✏️ ویرایش متن‌های انیمیشن", "admin:settings")],
+        "reports": [("📊 آمار", "admin:stats"), ("💾 بک‌آپ کامل", "admin:backup"), ("❓ بک‌آپ سوالات", "admin:backup_questions"), ("👥 بک‌آپ کاربران", "admin:backup_users"), ("⚙️ بک‌آپ تنظیمات", "admin:backup_settings")],
+        "file": [("📤 آپلود بک‌آپ", "admin:upload_backup"), ("💾 بک‌آپ کامل", "admin:backup")],
+        "notifications": [("🖼 عکس استارت", "admin:start_photo"), ("🛠 تغییر حالت تعمیر", "admin:maintenance_toggle"), ("⚙️ متن‌ها", "admin:settings")],
+    }
+    b = InlineKeyboardBuilder()
+    for text, data in menus.get(kind, []):
+        b.button(text=text, callback_data=data)
+    b.button(text="🔙 بازگشت", callback_data="admin:back")
+    b.adjust(1)
     return b.as_markup()

@@ -95,6 +95,7 @@ async def profile(message: Message, db: Database) -> None:
         joined = jalali_date(u['created_at'])
         last_duel = jalali_datetime(u['last_duel_at']) if 'last_duel_at' in u.keys() and u['last_duel_at'] else '—'
         xp_bar = xp_progress_text(u['xp'], cur, nxt)
+        level_display = await db.get_level_display(int(u['level']))
         analysis = await db.user_strengths_weaknesses(message.from_user.id)
         if analysis['strengths']:
             strengths = "\n".join(f"  {'🥇' if i == 0 else '🥈'} {r['genre']} — {int(r['pct'])}% دقت" for i, r in enumerate(analysis['strengths']))
@@ -104,7 +105,7 @@ async def profile(message: Message, db: Database) -> None:
             genre_analysis = "\n\n📊 هنوز داده‌ی کافی برای تحلیل نداری. بیشتر بازی کن!"
         await message.answer(
             f"👤 <b>{u['first_name'] or 'کاربر'}</b>  {username}\n"
-            f"{rank} | <b>Level {u['level']}</b> | XP {xp_bar}\n"
+            f"{rank} | <b>{level_display}</b> | XP {xp_bar}\n"
             f"🏆 {league_name} — <b>{u['cups']} جام</b>\n"
             f"🪙 سکه: <b>{u['coins']}</b>\n\n"
             f"⚔️ دوئل‌ها: {total_duels} | برد <b>{u['wins']}</b> / مساوی {u['draws']} / شکست <b>{u['losses']}</b>\n"
