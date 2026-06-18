@@ -98,7 +98,7 @@ async def profile(message: Message, db: Database) -> None:
         analysis = await db.user_strengths_weaknesses(message.from_user.id)
         if analysis['strengths']:
             strengths = "\n".join(f"  {'🥇' if i == 0 else '🥈'} {r['genre']} — {int(r['pct'])}% دقت" for i, r in enumerate(analysis['strengths']))
-            weaknesses = "\n".join(f"  📉 {r['genre']} — {int(r['pct'])}% دقت" for r in analysis['weaknesses'])
+            weaknesses = "\n".join(f"  📉 {r['genre']} — {int(r['pct'])}% دقت" for r in analysis['weaknesses']) or "  هنوز داده‌ی جداگانه کافی برای ضعف نداری."
             genre_analysis = f"\n\n💪 نقاط قوت:\n{strengths}\n\n⚠️ نقاط ضعف:\n{weaknesses}"
         else:
             genre_analysis = "\n\n📊 هنوز داده‌ی کافی برای تحلیل نداری. بیشتر بازی کن!"

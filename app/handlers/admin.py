@@ -141,6 +141,43 @@ async def backup_settings_command(message: Message, db: Database) -> None:
     await send_section_backup(message, db, "settings", "بک‌آپ تنظیمات و ساختار")
 
 
+@router.message(Command("upload_backup"))
+async def upload_backup_start(message: Message, db: Database, state: FSMContext) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        await state.set_state(AdminFlow.waiting_backup_upload)
+        await message.answer("فایل بک‌آپ (.json یا .sqlite/db) را همین‌جا ارسال کن تا روی Volume کنار دیتابیس ذخیره شود.", reply_markup=cancel_keyboard())
+    except Exception:
+        logger.exception("Upload backup start failed")
+        await message.answer("خطا.")
+
+
+@router.message(AdminFlow.waiting_backup_upload)
+async def upload_backup_receive(message: Message, db: Database, state: FSMContext, bot: Bot) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        if not message.document:
+            await message.answer("لطفاً فایل بک‌آپ را به صورت document ارسال کن.")
+            return
+        from pathlib import Path
+        original = message.document.file_name or "backup_file"
+        safe = ''.join(ch for ch in original if ch.isalnum() or ch in '._-')[:80] or 'backup_file'
+        dest_dir = Path(db.path).parent / "uploaded_backups"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / f"uploaded_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{safe}"
+        file = await bot.get_file(message.document.file_id)
+        downloaded = await bot.download_file(file.file_path)
+        dest.write_bytes(downloaded.read())
+        await db.log_admin(message.from_user.id, "upload_backup", details=str(dest))
+        await state.clear()
+        await message.answer(f"✅ فایل بک‌آپ روی Volume ذخیره شد:\n<code>{dest}</code>", reply_markup=main_menu(True))
+    except Exception:
+        logger.exception("Upload backup receive failed")
+        await message.answer("خطا در ذخیره فایل بک‌آپ.")
+
+
 @router.message(Command("version"))
 async def version_command(message: Message, db: Database) -> None:
     try:
@@ -165,8 +202,15 @@ async def sync_defaults_command(message: Message, db: Database) -> None:
         if force:
             # Force only the latest gameplay defaults that users specifically asked for.
             await db.set_setting("question_approval_reward_coins", "20")
+            await db.set_setting("random_duel_win_coin_bonus", "20")
             await db.set_setting("powerup_remove2_cost", "15")
             await db.set_setting("powerup_second_chance_cost", "20")
+            await db.set_setting("visual_timer_enabled", "1")
+            await db.set_setting("visual_timer_interval_seconds", "6")
+            await db.set_setting("fast_bonus_xp_0_5", "5")
+            await db.set_setting("fast_bonus_xp_5_10", "2")
+            await db.set_setting("question_auto_disable_reports", "3")
+            await db.set_setting("genre_stats_min_answers", "1")
             await db.set_setting("streak_day_1_coins", "5")
             await db.set_setting("streak_day_2_coins", "10")
             await db.set_setting("streak_day_3_coins", "15")

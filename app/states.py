@@ -26,6 +26,7 @@ class AdminFlow(StatesGroup):
     waiting_user_delta = State()
     waiting_admin_id = State()
     waiting_start_photo = State()
+    waiting_backup_upload = State()
 
 
 class BulkQuestionImport(StatesGroup):

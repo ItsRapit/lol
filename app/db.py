@@ -351,6 +351,8 @@ class Database:
             "fast_bonus_xp_0_5": ("5", "Fast answer bonus XP for 0-5 seconds"),
             "fast_bonus_xp_5_10": ("2", "Fast answer bonus XP for 5-10 seconds"),
             "question_auto_disable_reports": ("3", "Auto-disable question after this many reports"),
+            "genre_stats_min_answers": ("1", "Minimum answered questions per genre for profile strength/weakness analysis"),
+            "payment_card_holder": ("", "Card holder name shown in payment instructions"),
             "daily_question_limit": ("5", "Daily user submissions"),
             "referral_referrer_coins": ("50", "Referrer coin reward"),
             "referral_referrer_xp": ("50", "Referrer XP reward"),
@@ -700,9 +702,32 @@ class Database:
         return await self.fetchall(sql, params)
 
     async def start_duel_questions(self, duel_id: int, genres: list[str], count: int) -> list[aiosqlite.Row]:
-        qs = await self.select_questions_for_duel(genres, count, set())
+        # Balanced random selection: try to include questions from all selected genres, without duplicates.
+        unique_genres = list(dict.fromkeys(genres))
+        per_genre: dict[str, list[aiosqlite.Row]] = {}
+        for genre in unique_genres:
+            rows = await self.select_questions_for_duel([genre], max(count, 20), set())
+            per_genre[genre] = rows
+        selected: list[aiosqlite.Row] = []
+        used: set[int] = set()
+        while len(selected) < count and any(per_genre.values()):
+            progressed = False
+            for genre in unique_genres:
+                bucket = per_genre.get(genre, [])
+                while bucket:
+                    q = bucket.pop(0)
+                    if q["id"] not in used:
+                        selected.append(q)
+                        used.add(q["id"])
+                        progressed = True
+                        break
+                if len(selected) >= count:
+                    break
+            if not progressed:
+                break
+        qs = selected
         await self.executemany_write("INSERT OR IGNORE INTO duel_questions(duel_id,question_id,seq) VALUES(?,?,?)", [(duel_id, q["id"], i) for i, q in enumerate(qs)])
-        await self.execute_write("UPDATE duels SET status='playing', started_at=?, common_genres=? WHERE id=?", (now_iso(), "|".join(genres), duel_id))
+        await self.execute_write("UPDATE duels SET status='playing', started_at=?, common_genres=? WHERE id=?", (now_iso(), "|".join(unique_genres), duel_id))
         return qs
 
     async def duel_question_by_seq(self, duel_id: int, seq: int) -> aiosqlite.Row | None:
@@ -834,10 +859,13 @@ class Database:
                                      (r['user_id'], r['genre'], int(r['correct'] or 0), int(r['total'] or 0), now_iso()))
 
     async def user_strengths_weaknesses(self, user_id: int) -> dict[str, list[aiosqlite.Row]]:
+        min_answers = await self.get_int("genre_stats_min_answers", 1)
         rows = await self.fetchall("""SELECT genre, correct, total, (correct * 100.0 / total) pct
-                                      FROM user_genre_stats WHERE user_id=? AND total>=5""", (user_id,))
-        strengths = sorted(rows, key=lambda r: float(r['pct']), reverse=True)[:2]
-        weaknesses = sorted(rows, key=lambda r: float(r['pct']))[:2]
+                                      FROM user_genre_stats WHERE user_id=? AND total>=?""", (user_id, min_answers))
+        strengths = sorted(rows, key=lambda r: (float(r['pct']), int(r['total'])), reverse=True)[:2]
+        strength_genres = {r['genre'] for r in strengths}
+        weakness_candidates = [r for r in rows if r['genre'] not in strength_genres]
+        weaknesses = sorted(weakness_candidates, key=lambda r: (float(r['pct']), -int(r['total'])))[:2]
         return {'strengths': strengths, 'weaknesses': weaknesses}
 
 

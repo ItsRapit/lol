@@ -21,13 +21,16 @@ class CardToCardPaymentProvider(PaymentProvider):
 
     async def instructions(self, db: Database, tx) -> PaymentInstructions:
         card = await db.get_setting("payment_card_number", "تنظیم نشده")
+        holder = await db.get_setting("payment_card_holder", "")
         final_price = tx["final_price_label"] or tx["price_label"]
+        holder_line = f"به نام: <b>{holder}</b>\n" if holder else ""
         return PaymentInstructions(
             title="پرداخت کارت‌به‌کارت",
             text=(
                 f"بسته: {tx['title']}\n"
                 f"مبلغ نهایی: <b>{final_price}</b>\n"
-                f"شماره کارت:\n<code>{card}</code>\n\n"
+                f"شماره کارت:\n<code>{card}</code>\n"
+                f"{holder_line}\n"
                 "بعد از واریز، رسید را به‌صورت عکس یا متن همین‌جا ارسال کن."
             ),
         )

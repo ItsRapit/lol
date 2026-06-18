@@ -31,7 +31,7 @@ class AccessGuardMiddleware(BaseMiddleware):
             elif isinstance(event, CallbackQuery):
                 logger.info("Callback received: data=%s from=%s chat_type=%s", event.data, event.from_user.id if event.from_user else None, event.message.chat.type if event.message else None)
                 if event.message and event.message.chat.type != "private":
-                    allowed_prefixes = ("tx:", "qrev:")
+                    allowed_prefixes = ("tx:", "qrev:", "qadmin:", "qact:", "report_ignore:")
                     if not (event.data or "").startswith(allowed_prefixes):
                         return None
                 if db and event.from_user and await db.get_int("maintenance_mode", 0) == 1 and not await db.is_admin(event.from_user.id):

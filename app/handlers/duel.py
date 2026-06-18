@@ -429,30 +429,18 @@ async def finish_and_notify(duel_id: int, db: Database, bot: Bot) -> None:
     winner = result['winner']
     for uid in [duel['player1_id'], duel['player2_id']]:
         if winner is None:
-            line = "نتیجه: مساوی"
+            line = "🤝 نتیجه: مساوی"
         elif winner == uid:
-            line = "🎉 شما برنده شدید!"
+            line = "🎉 شما برنده شدید"
         else:
-            line = "شما بازنده شدید."
+            line = "😔 شما بازنده شدید"
         rewards = result.get('transitions', {}).get(uid, {}).get('rewards', {})
-        if winner == uid and not duel['invite_token']:
-            reward_text = (
-                f"\n\n🏆 بردی!\n"
-                f"🪙 پاداش جواب‌ها: {rewards.get('answer_coins', 0)} سکه\n"
-                f"🎯 پاداش برد: {rewards.get('win_coins', 0)} سکه\n"
-                f"─────────────\n"
-                f"💰 جمع سکه: {rewards.get('answer_coins', 0) + rewards.get('win_coins', 0)} سکه\n"
-                f"⭐ XP: {rewards.get('xp', 0):+}\n"
-                f"🏆 جام: {rewards.get('cups', 0):+}"
-            )
-        else:
-            reward_text = (
-                f"\n\nدریافتی این بازی:\n"
-                f"🪙 سکه: {rewards.get('coins', 0):+}\n"
-                f"⭐ XP: {rewards.get('xp', 0):+}\n"
-                f"🏆 جام: {rewards.get('cups', 0):+}"
-            )
-        await bot.send_message(uid, f"🏁 دوئل تمام شد.\n{line}\n\nامتیاز شما: {stats[uid]['correct']} پاسخ صحیح\nامتیاز حریف: {stats[duel['player1_id' if uid==duel['player2_id'] else 'player2_id']]['correct']} پاسخ صحیح{reward_text}", reply_markup=main_menu(await db.is_admin(uid)))
+        reward_text = (
+            f"\n\n💰 سکه: {rewards.get('coins', 0):+}\n"
+            f"⭐ ایکس‌پی: {rewards.get('xp', 0):+}\n"
+            f"🏆 جام: {rewards.get('cups', 0):+}"
+        )
+        await bot.send_message(uid, f"🏁 دوئل تمام شد\n{line}{reward_text}\n\nامتیاز شما: {stats[uid]['correct']} پاسخ صحیح\nامتیاز حریف: {stats[duel['player1_id' if uid==duel['player2_id'] else 'player2_id']]['correct']} پاسخ صحیح", reply_markup=main_menu(await db.is_admin(uid)))
         summary = await db.duel_user_summary(duel_id, uid)
         wrong_lines = "\n".join(f"• {x['genre']} — جواب درست: {x['correct']}" for x in summary['wrong_items']) or "—"
         await bot.send_message(uid, f"📊 خلاصه‌ی دوئل تو:\n\n✅ درست: {summary['correct']} سوال\n❌ غلط: {summary['wrong']} سوال\n⏱ میانگین زمان پاسخ: {summary['avg_seconds']:.1f} ثانیه\n🎯 دقت: {summary['accuracy']}%\n\n📌 سوالاتی که غلط زدی:\n{wrong_lines}")
@@ -490,6 +478,11 @@ async def powerup_callback(call: CallbackQuery, db: Database) -> None:
         if not ok:
             await call.answer("امکان استفاده نیست.", show_alert=True); return
         await db.change_coins(call.from_user.id, -cost, f"powerup_{ptype}", duel_id)
+        rt = runtime(duel_id)
+        for t in rt.visual_tasks:
+            if not t.done():
+                t.cancel()
+        rt.visual_tasks.clear()
         wrong = [i for i in range(1,5) if i != q['correct_option']]
         new_costs = await db.powerup_costs_for_user(duel_id, call.from_user.id)
         hidden_key = (duel_id, call.from_user.id, qid)
