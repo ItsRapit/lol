@@ -53,7 +53,10 @@ async def main() -> None:
         BotCommand(command="version", description="نمایش نسخه فعال"),
         BotCommand(command="sync_defaults", description="همگام‌سازی تنظیمات پیش‌فرض"),
         BotCommand(command="help", description="راهنما"),
-        BotCommand(command="backup", description="دریافت بک‌آپ دیتابیس"),
+        BotCommand(command="backup", description="دریافت بک‌آپ کامل دیتابیس"),
+        BotCommand(command="backup_questions", description="بک‌آپ سوالات"),
+        BotCommand(command="backup_users", description="بک‌آپ کاربران"),
+        BotCommand(command="backup_settings", description="بک‌آپ تنظیمات"),
         BotCommand(command="cancel", description="لغو عملیات جاری"),
     ])
 

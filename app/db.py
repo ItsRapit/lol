@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
 from datetime import datetime, timedelta, timezone
@@ -274,6 +275,14 @@ class Database:
                 created_by INTEGER NOT NULL,
                 created_at TEXT NOT NULL
             )""",
+            """CREATE TABLE IF NOT EXISTS user_genre_stats(
+                user_id INTEGER NOT NULL,
+                genre TEXT NOT NULL,
+                correct INTEGER NOT NULL DEFAULT 0,
+                total INTEGER NOT NULL DEFAULT 0,
+                last_updated TEXT NOT NULL,
+                PRIMARY KEY(user_id, genre)
+            )""",
         ]
         async with self._write_lock:
             for sql in statements:
@@ -300,6 +309,10 @@ class Database:
         await self.add_column_if_missing("questions", "added_by", "added_by INTEGER")
         await self.add_column_if_missing("questions", "approved", "approved INTEGER NOT NULL DEFAULT 0")
         await self.add_column_if_missing("questions", "approved_by", "approved_by INTEGER")
+        await self.add_column_if_missing("questions", "explanation", "explanation TEXT")
+        await self.add_column_if_missing("questions", "difficulty", "difficulty TEXT NOT NULL DEFAULT 'متوسط'")
+        await self.add_column_if_missing("duel_answers", "answer_score", "answer_score REAL NOT NULL DEFAULT 0")
+        await self.add_column_if_missing("duel_answers", "attempt", "attempt INTEGER NOT NULL DEFAULT 1")
         await self.add_column_if_missing("shop_packages", "package_type", "package_type TEXT NOT NULL DEFAULT 'coins'")
         await self.add_column_if_missing("shop_packages", "price_amount", "price_amount INTEGER NOT NULL DEFAULT 0")
         await self.add_column_if_missing("shop_transactions", "discount_code_id", "discount_code_id INTEGER")
@@ -327,11 +340,17 @@ class Database:
             "genres_to_choose": ("2", "Genres each player chooses"),
             "reward_coin_per_correct": ("10", "Coins for each correct answer"),
             "reward_xp_per_correct": ("15", "XP for each correct answer"),
+            "random_duel_win_coin_bonus": ("20", "Extra coin bonus for random duel winner"),
             "winner_bonus_xp": ("20", "XP bonus for duel winner"),
-            "powerup_5050_cost": ("5", "Base cost of 50:50; doubles after each powerup use in a duel"),
-            "powerup_hint_cost": ("5", "Base cost of hint; doubles after each powerup use in a duel"),
+            "powerup_remove2_cost": ("15", "Cost of remove two options powerup"),
+            "powerup_second_chance_cost": ("20", "Cost of second chance powerup"),
             "powerup_max_uses_per_duel": ("5", "Maximum total powerup uses per user per duel"),
             "question_approval_reward_coins": ("20", "Coins rewarded to user when submitted question is approved"),
+            "visual_timer_enabled": ("1", "Enable visual progress timer edits"),
+            "visual_timer_interval_seconds": ("6", "Visual timer edit interval"),
+            "fast_bonus_xp_0_5": ("5", "Fast answer bonus XP for 0-5 seconds"),
+            "fast_bonus_xp_5_10": ("2", "Fast answer bonus XP for 5-10 seconds"),
+            "question_auto_disable_reports": ("3", "Auto-disable question after this many reports"),
             "daily_question_limit": ("5", "Daily user submissions"),
             "referral_referrer_coins": ("50", "Referrer coin reward"),
             "referral_referrer_xp": ("50", "Referrer XP reward"),
@@ -693,12 +712,13 @@ class Database:
         row = await self.fetchone("SELECT COUNT(*) c FROM duel_questions WHERE duel_id=?", (duel_id,))
         return int(row["c"] if row else 0)
 
-    async def record_answer(self, duel_id: int, qid: int, user_id: int, selected: int | None, correct_option: int, response_ms: int | None) -> bool:
+    async def record_answer(self, duel_id: int, qid: int, user_id: int, selected: int | None, correct_option: int, response_ms: int | None, answer_score: float | None = None, attempt: int = 1) -> bool:
         is_correct = int(selected == correct_option) if selected is not None else 0
+        score = float(answer_score if answer_score is not None else is_correct)
         try:
             await self.execute_write(
-                "INSERT INTO duel_answers(duel_id,question_id,user_id,selected_option,is_correct,response_ms,answered_at) VALUES(?,?,?,?,?,?,?)",
-                (duel_id, qid, user_id, selected, is_correct, response_ms, now_iso()),
+                "INSERT INTO duel_answers(duel_id,question_id,user_id,selected_option,is_correct,response_ms,answered_at,answer_score,attempt) VALUES(?,?,?,?,?,?,?,?,?)",
+                (duel_id, qid, user_id, selected, is_correct, response_ms, now_iso(), score, attempt),
             )
             await self.execute_write("UPDATE users SET correct_answers=correct_answers+?, total_answers=total_answers+? WHERE telegram_id=?", (is_correct, 1 if selected else 0, user_id))
             return True
@@ -719,31 +739,23 @@ class Database:
             return False
 
     async def has_powerup(self, duel_id: int, qid: int, user_id: int, powerup: str) -> bool:
-        return bool(await self.fetchone("SELECT 1 FROM powerup_usages WHERE duel_id=? AND question_id=? AND user_id=? AND powerup=?", (duel_id, qid, user_id, powerup)))
-
-    async def powerup_uses_in_duel(self, duel_id: int, user_id: int) -> int:
-        row = await self.fetchone("SELECT COUNT(*) c FROM powerup_usages WHERE duel_id=? AND user_id=?", (duel_id, user_id))
-        return int(row["c"] if row else 0)
+        return bool(await self.fetchone("SELECT 1 FROM powerup_usages WHERE duel_id=? AND user_id=? AND powerup=?", (duel_id, user_id, powerup)))
 
     async def powerup_costs_for_user(self, duel_id: int, user_id: int) -> dict[str, int]:
-        uses = await self.powerup_uses_in_duel(duel_id, user_id)
-        multiplier = 2 ** uses
         return {
-            "uses": uses,
-            "5050": await self.get_int("powerup_5050_cost", 5) * multiplier,
-            "hint": await self.get_int("powerup_hint_cost", 5) * multiplier,
-            "max": await self.get_int("powerup_max_uses_per_duel", 5),
+            "remove2": await self.get_int("powerup_remove2_cost", 15),
+            "second": await self.get_int("powerup_second_chance_cost", 20),
         }
 
     async def finish_duel(self, duel_id: int) -> dict[str, Any]:
         duel = await self.get_duel(duel_id)
         if not duel:
             return {}
-        rows = await self.fetchall("""SELECT user_id, SUM(is_correct) correct, COALESCE(SUM(response_ms), 999999999) speed
+        rows = await self.fetchall("""SELECT user_id, SUM(is_correct) correct, COALESCE(SUM(answer_score), SUM(is_correct), 0) score, COALESCE(SUM(response_ms), 999999999) speed
                                       FROM duel_answers WHERE duel_id=? GROUP BY user_id""", (duel_id,))
-        stats = {r["user_id"]: {"correct": int(r["correct"] or 0), "speed": int(r["speed"] or 999999999)} for r in rows}
+        stats = {r["user_id"]: {"correct": int(r["correct"] or 0), "score": float(r["score"] or 0), "speed": int(r["speed"] or 999999999)} for r in rows}
         for p in [duel["player1_id"], duel["player2_id"]]:
-            stats.setdefault(p, {"correct": 0, "speed": 999999999})
+            stats.setdefault(p, {"correct": 0, "score": 0.0, "speed": 999999999})
         p1, p2 = duel["player1_id"], duel["player2_id"]
         before: dict[int, dict[str, Any]] = {}
         for uid in [p1, p2]:
@@ -760,15 +772,26 @@ class Database:
         coin_per = await self.get_int("reward_coin_per_correct", 10)
         xp_per = await self.get_int("reward_xp_per_correct", 15)
         bonus = await self.get_int("winner_bonus_xp", 20)
+        win_coin_bonus = await self.get_int("random_duel_win_coin_bonus", 20)
+        reward_details: dict[int, dict[str, int]] = {p1: {"answer_coins": 0, "win_coins": 0, "answer_xp": 0, "win_xp": 0}, p2: {"answer_coins": 0, "win_coins": 0, "answer_xp": 0, "win_xp": 0}}
         for uid, st in stats.items():
-            if st["correct"]:
-                if is_random_duel:
-                    await self.change_coins(uid, st["correct"] * coin_per, "duel_correct", duel_id)
-                await self.change_xp(uid, st["correct"] * xp_per, "duel_correct", duel_id)
+            if st["score"]:
+                answer_coins = int(st["score"] * coin_per) if is_random_duel else 0
+                answer_xp = int(st["score"] * xp_per)
+                if answer_coins:
+                    await self.change_coins(uid, answer_coins, "duel_correct", duel_id)
+                if answer_xp:
+                    await self.change_xp(uid, answer_xp, "duel_correct", duel_id)
+                reward_details[uid]["answer_coins"] = answer_coins
+                reward_details[uid]["answer_xp"] = answer_xp
             urow = await self.get_user(uid)
             league = await self.get_user_league(int(urow["cups"] if urow else 0))
             if winner == uid:
                 await self.change_xp(uid, bonus, "winner_bonus", duel_id)
+                reward_details[uid]["win_xp"] = bonus
+                if is_random_duel and win_coin_bonus:
+                    await self.change_coins(uid, win_coin_bonus, "random_duel_win_bonus", duel_id)
+                    reward_details[uid]["win_coins"] = win_coin_bonus
                 if league:
                     await self.change_cups(uid, int(league["win_cups"]), "duel_win", duel_id, league["id"])
                 await self.execute_write("UPDATE users SET wins=wins+1, last_duel_at=? WHERE telegram_id=?", (now_iso(), uid))
@@ -786,14 +809,54 @@ class Database:
             transitions[uid] = {
                 "before": before[uid],
                 "after": after,
-                "rewards": {"coins": after["coins"] - before[uid]["coins"], "xp": after["xp"] - before[uid]["xp"], "cups": after["cups"] - before[uid]["cups"]},
+                "rewards": {"coins": after["coins"] - before[uid]["coins"], "xp": after["xp"] - before[uid]["xp"], "cups": after["cups"] - before[uid]["cups"], **reward_details.get(uid, {})},
                 "level_up": after["level"] > before[uid]["level"],
                 "league_promoted": after["league_order"] > before[uid]["league_order"],
                 "league_demoted": after["league_order"] < before[uid]["league_order"],
             }
+        await self.update_genre_stats_for_duel(duel_id)
         await self.clear_other_active_duels_for_users([p1, p2], keep_duel_id=duel_id)
         await self.activate_referrals_for_players([p1, p2])
         return {"winner": winner, "stats": stats, "transitions": transitions}
+
+
+    async def update_genre_stats_for_duel(self, duel_id: int) -> None:
+        rows = await self.fetchall("""SELECT a.user_id, q.genre, SUM(a.is_correct) correct, COUNT(*) total
+                                      FROM duel_answers a JOIN questions q ON q.id=a.question_id
+                                      WHERE a.duel_id=? GROUP BY a.user_id, q.genre""", (duel_id,))
+        for r in rows:
+            await self.execute_write("""INSERT INTO user_genre_stats(user_id,genre,correct,total,last_updated)
+                                      VALUES(?,?,?,?,?)
+                                      ON CONFLICT(user_id,genre) DO UPDATE SET
+                                      correct=correct+excluded.correct,
+                                      total=total+excluded.total,
+                                      last_updated=excluded.last_updated""",
+                                     (r['user_id'], r['genre'], int(r['correct'] or 0), int(r['total'] or 0), now_iso()))
+
+    async def user_strengths_weaknesses(self, user_id: int) -> dict[str, list[aiosqlite.Row]]:
+        rows = await self.fetchall("""SELECT genre, correct, total, (correct * 100.0 / total) pct
+                                      FROM user_genre_stats WHERE user_id=? AND total>=5""", (user_id,))
+        strengths = sorted(rows, key=lambda r: float(r['pct']), reverse=True)[:2]
+        weaknesses = sorted(rows, key=lambda r: float(r['pct']))[:2]
+        return {'strengths': strengths, 'weaknesses': weaknesses}
+
+
+    async def duel_user_summary(self, duel_id: int, user_id: int) -> dict[str, Any]:
+        rows = await self.fetchall("""SELECT a.*, q.genre, q.correct_option, q.option1,q.option2,q.option3,q.option4
+                                      FROM duel_answers a JOIN questions q ON q.id=a.question_id
+                                      WHERE a.duel_id=? AND a.user_id=? ORDER BY a.question_id""", (duel_id, user_id))
+        total = len(rows)
+        correct = sum(1 for r in rows if r['is_correct'])
+        wrong = total - correct
+        times = [int(r['response_ms']) for r in rows if r['response_ms'] is not None]
+        avg = (sum(times) / len(times) / 1000) if times else 0
+        accuracy = int((correct / total) * 100) if total else 0
+        wrong_items = []
+        for r in rows:
+            if not r['is_correct']:
+                opts = [r['option1'], r['option2'], r['option3'], r['option4']]
+                wrong_items.append({'genre': r['genre'], 'correct': opts[int(r['correct_option']) - 1]})
+        return {'correct': correct, 'wrong': wrong, 'avg_seconds': avg, 'accuracy': accuracy, 'wrong_items': wrong_items[:5]}
 
     async def activate_referrals_for_players(self, players: list[int]) -> None:
         for uid in players:
@@ -1008,6 +1071,27 @@ class Database:
         await self.execute_write("UPDATE questions SET status=?, reviewed_by=?, reviewed_at=?, approved=?, approved_by=? WHERE id=?", ("active" if approve else "rejected", admin_id, now_iso(), 1 if approve else 0, admin_id if approve else None, qid))
         return q
 
+
+    async def question_answer_stats(self, qid: int) -> dict[str, Any]:
+        row = await self.fetchone("SELECT COUNT(*) total, COALESCE(SUM(is_correct),0) correct FROM duel_answers WHERE question_id=?", (qid,))
+        total = int(row['total'] if row else 0)
+        correct = int(row['correct'] if row else 0)
+        pct = int((correct / total) * 100) if total else 0
+        return {'total': total, 'correct': correct, 'pct': pct}
+
+    async def report_exists(self, question_id: int, reporter_id: int) -> bool:
+        return bool(await self.fetchone("SELECT 1 FROM question_reports WHERE question_id=? AND reporter_id=?", (question_id, reporter_id)))
+
+    async def report_count(self, question_id: int) -> int:
+        row = await self.fetchone("SELECT COUNT(*) c FROM question_reports WHERE question_id=?", (question_id,))
+        return int(row['c'] if row else 0)
+
+    async def deactivate_question(self, qid: int) -> None:
+        await self.execute_write("UPDATE questions SET status='disabled' WHERE id=?", (qid,))
+
+    async def delete_question(self, qid: int) -> None:
+        await self.execute_write("DELETE FROM questions WHERE id=?", (qid,))
+
     async def add_report(self, question_id: int, reporter_id: int, duel_id: int | None, reason: str | None) -> int:
         cur = await self.execute_write("INSERT INTO question_reports(question_id,reporter_id,duel_id,reason,created_at) VALUES(?,?,?,?,?)", (question_id, reporter_id, duel_id, reason, now_iso()))
         return int(cur.lastrowid)
@@ -1047,6 +1131,30 @@ class Database:
 
     async def log_admin(self, admin_id: int, action: str, target: str | None = None, details: str | None = None) -> None:
         await self.execute_write("INSERT INTO admin_actions_log(admin_id,action,target,details,created_at) VALUES(?,?,?,?,?)", (admin_id, action, target, details, now_iso()))
+
+
+    async def export_section_backup(self, section: str) -> str:
+        groups = {
+            'questions': ['questions'],
+            'users': ['users', 'referrals', 'xp_events', 'coin_events', 'cup_events', 'user_genre_stats'],
+            'settings': ['settings', 'ranks', 'genres', 'leagues', 'shop_packages', 'discount_codes'],
+            'all': ['users','admins','settings','ranks','genres','leagues','questions','duels','duel_questions','duel_answers','powerup_usages','xp_events','coin_events','cup_events','shop_packages','shop_transactions','referrals','question_reports','admin_actions_log','discount_codes','user_genre_stats'],
+        }
+        tables = groups.get(section)
+        if not tables:
+            raise ValueError('Invalid backup section')
+        data: dict[str, Any] = {}
+        for table in tables:
+            try:
+                rows = await self.fetchall(f"SELECT * FROM {table}")
+                data[table] = [dict(r) for r in rows]
+            except Exception:
+                logger.exception("Backup export failed for table %s", table)
+                data[table] = []
+        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+        dest = str(Path(self.path).parent / f"backup_{section}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.json")
+        Path(dest).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+        return dest
 
     async def backup_copy(self) -> str:
         dest = f"{self.path}.{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.backup"

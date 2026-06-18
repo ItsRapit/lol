@@ -11,7 +11,7 @@ from app.keyboards import (
     admin_shop_types_keyboard, admin_shop_packages_keyboard, admin_shop_edit_keyboard,
     admin_leagues_keyboard, admin_league_edit_keyboard, admin_discounts_keyboard,
     discount_kind_keyboard, question_manage_keyboard, question_genres_keyboard, pending_questions_keyboard,
-    invalid_questions_confirm_keyboard, review_question_keyboard,
+    invalid_questions_confirm_keyboard, review_question_keyboard, question_admin_actions_keyboard,
 )
 from app.states import AdminFlow, BulkQuestionImport, ShopPackageFlow, LeagueFlow, DiscountFlow, QuestionCleanupFlow
 from app.bulk_questions import parse_bulk_questions, format_bulk_report, bulk_help_text, extract_json_text, is_json_balanced, looks_like_json, looks_like_bulk_text
@@ -75,6 +75,72 @@ async def backup_command(message: Message, db: Database) -> None:
         await message.answer("خطا در ساخت بک‌آپ.")
 
 
+async def format_question_admin_text(db: Database, qid: int) -> str | None:
+    q = await db.get_question(qid)
+    if not q:
+        return None
+    opts = [q['option1'], q['option2'], q['option3'], q['option4']]
+    stats = await db.question_answer_stats(qid)
+    submitter = await db.get_user(q['submitted_by']) if q['submitted_by'] else None
+    submitter_name = (submitter['first_name'] or submitter['username'] or '—') if submitter else 'ادمین/نامشخص'
+    submitter_id = q['submitted_by'] or '—'
+    return (
+        f"📋 سوال #{q['id']}\n\n"
+        f"❓ متن: {q['text']}\n"
+        f"🏷 ژانر: {q['genre']}\n"
+        f"⚙️ سختی: {q['difficulty'] if 'difficulty' in q.keys() else 'متوسط'}\n"
+        f"✅ جواب درست: {opts[int(q['correct_option']) - 1]}\n"
+        f"🔘 گزینه‌ها:\n  1. {opts[0]}\n  2. {opts[1]}\n  3. {opts[2]}\n  4. {opts[3]}\n"
+        f"📊 آمار: {stats['total']} بار پرسیده شده | {stats['pct']}% درصد پاسخ درست\n"
+        f"👤 پیشنهاددهنده: {submitter_name} | ID: {submitter_id}\n"
+        f"📅 تاریخ ثبت: {jalali_datetime(q['created_at'])}\n"
+        f"📌 وضعیت: {q['status']}"
+    )
+
+
+@router.message(Command("question"))
+async def question_lookup_command(message: Message, db: Database) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        parts = (message.text or '').split()
+        if len(parts) != 2 or not parts[1].isdigit():
+            await message.answer("فرمت درست: /question ID")
+            return
+        qid = int(parts[1])
+        text = await format_question_admin_text(db, qid)
+        if not text:
+            await message.answer("سوال پیدا نشد.")
+            return
+        await message.answer(text, reply_markup=question_admin_actions_keyboard(qid))
+    except Exception:
+        logger.exception("Question lookup failed")
+        await message.answer("خطا در جستجوی سوال.")
+
+
+async def send_section_backup(message: Message, db: Database, section: str, title: str) -> None:
+    if not await require_admin_message(message, db):
+        return
+    path = await db.export_section_backup(section)
+    await message.answer_document(FSInputFile(path), caption=title)
+    await db.log_admin(message.from_user.id, f"backup_{section}")
+
+
+@router.message(Command("backup_questions"))
+async def backup_questions_command(message: Message, db: Database) -> None:
+    await send_section_backup(message, db, "questions", "بک‌آپ سوالات")
+
+
+@router.message(Command("backup_users"))
+async def backup_users_command(message: Message, db: Database) -> None:
+    await send_section_backup(message, db, "users", "بک‌آپ کاربران")
+
+
+@router.message(Command("backup_settings"))
+async def backup_settings_command(message: Message, db: Database) -> None:
+    await send_section_backup(message, db, "settings", "بک‌آپ تنظیمات و ساختار")
+
+
 @router.message(Command("version"))
 async def version_command(message: Message, db: Database) -> None:
     try:
@@ -99,9 +165,8 @@ async def sync_defaults_command(message: Message, db: Database) -> None:
         if force:
             # Force only the latest gameplay defaults that users specifically asked for.
             await db.set_setting("question_approval_reward_coins", "20")
-            await db.set_setting("powerup_5050_cost", "5")
-            await db.set_setting("powerup_hint_cost", "5")
-            await db.set_setting("powerup_max_uses_per_duel", "5")
+            await db.set_setting("powerup_remove2_cost", "15")
+            await db.set_setting("powerup_second_chance_cost", "20")
             await db.set_setting("streak_day_1_coins", "5")
             await db.set_setting("streak_day_2_coins", "10")
             await db.set_setting("streak_day_3_coins", "15")
@@ -111,18 +176,18 @@ async def sync_defaults_command(message: Message, db: Database) -> None:
             await db.set_setting("streak_day_7_coins", "50")
             await db.set_setting("streak_day_7_xp", "0")
         genres = await db.all_genres()
-        p5050 = await db.get_setting("powerup_5050_cost", "?")
-        phint = await db.get_setting("powerup_hint_cost", "?")
-        pmax = await db.get_setting("powerup_max_uses_per_duel", "?")
+        p5050 = await db.get_setting("powerup_remove2_cost", "?")
+        phint = await db.get_setting("powerup_second_chance_cost", "?")
+        pmax = "1 بار برای هرکدام در هر دوئل"
         qreward = await db.get_setting("question_approval_reward_coins", "?")
         await db.log_admin(message.from_user.id, "sync_defaults", details="force" if force else "normal")
         await message.answer(
             "✅ همگام‌سازی پیش‌فرض‌ها انجام شد.\n\n"
             f"ژانرها ({len(genres)}): {', '.join(genres)}\n\n"
             f"پاداش تایید سوال: {qreward} سکه\n"
-            f"قیمت 50:50: {p5050}\n"
-            f"قیمت کمک: {phint}\n"
-            f"حداکثر پاورآپ در هر دست: {pmax}\n\n"
+            f"قیمت حذف دو گزینه: {p5050}\n"
+            f"قیمت شانس دوباره: {phint}\n"
+            f"محدودیت پاورآپ: {pmax}\n\n"
             "اگر می‌خواهی مقادیر جدید حتماً جایگزین قبلی شوند، بزن:\n"
             "<code>/sync_defaults force</code>"
         )
@@ -870,4 +935,41 @@ async def question_cleanup_confirm(call: CallbackQuery, db: Database, state: FSM
         await call.answer()
     except Exception:
         logger.exception("Question cleanup failed")
+        await call.answer("خطا", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("qact:"))
+async def question_action_callback(call: CallbackQuery, db: Database) -> None:
+    try:
+        if not await require_admin_call(call, db):
+            return
+        _, action, qid_s = call.data.split(":")
+        qid = int(qid_s)
+        if action == "delete":
+            await db.delete_question(qid)
+            await db.log_admin(call.from_user.id, "question_delete", str(qid))
+            await call.message.answer(f"سوال #{qid} حذف شد.")
+        elif action == "disable":
+            await db.deactivate_question(qid)
+            await db.log_admin(call.from_user.id, "question_disable", str(qid))
+            await call.message.answer(f"سوال #{qid} غیرفعال شد.")
+        elif action == "edit":
+            await call.message.answer("ویرایش متنی هنوز مرحله‌ای نشده؛ فعلاً از حذف/غیرفعال و ثبت مجدد استفاده کن.")
+        await call.answer()
+    except Exception:
+        logger.exception("Question action failed")
+        await call.answer("خطا", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("report_ignore:"))
+async def report_ignore_callback(call: CallbackQuery, db: Database) -> None:
+    try:
+        if not await require_admin_call(call, db):
+            return
+        rid = int(call.data.split(":")[1])
+        await db.execute_write("UPDATE question_reports SET status='ignored' WHERE id=?", (rid,))
+        await call.message.edit_reply_markup(reply_markup=None)
+        await call.answer("نادیده گرفته شد.")
+    except Exception:
+        logger.exception("Report ignore failed")
         await call.answer("خطا", show_alert=True)

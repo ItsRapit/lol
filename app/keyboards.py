@@ -57,18 +57,18 @@ def genres_keyboard(duel_id: int, genres: list[str], selected: set[str], max_cou
     return b.as_markup()
 
 
-def question_keyboard(duel_id: int, qid: int, options: list[str], hidden: set[int] | None = None, cost_5050: int = 0, cost_hint: int = 0) -> InlineKeyboardMarkup:
+def question_keyboard(duel_id: int, qid: int, options: list[str], hidden: set[int] | None = None, cost_remove2: int = 0, cost_second: int = 0) -> InlineKeyboardMarkup:
     hidden = hidden or set()
     b = InlineKeyboardBuilder()
     for i, opt in enumerate(options, 1):
         if i in hidden:
-            b.button(text="❌ حذف شد", callback_data="noop")
+            b.button(text="❌", callback_data="noop")
         else:
             b.button(text=f"{i}. {opt}", callback_data=f"ans:{duel_id}:{qid}:{i}")
-    b.button(text=f"50:50 — {cost_5050} سکه", callback_data=f"power:5050:{duel_id}:{qid}")
-    b.button(text=f"💡 کمک — {cost_hint} سکه", callback_data=f"power:hint:{duel_id}:{qid}")
-    b.button(text="🚩 گزارش سوال", callback_data=f"report:{duel_id}:{qid}")
-    b.adjust(1, 1, 1, 1, 2, 1)
+    b.button(text=f"🔪 حذف دو گزینه — {cost_remove2} سکه", callback_data=f"power:remove2:{duel_id}:{qid}")
+    b.button(text=f"🔄 شانس دوباره — {cost_second} سکه", callback_data=f"power:second:{duel_id}:{qid}")
+    b.button(text="⚠️ گزارش مشکل سوال", callback_data=f"issue_report:{duel_id}:{qid}")
+    b.adjust(1, 1, 1, 1, 1, 1, 1)
     return b.as_markup()
 
 
@@ -291,4 +291,42 @@ def invalid_questions_confirm_keyboard() -> InlineKeyboardMarkup:
     b.button(text="✅ تایید حذف سوالات نامعتبر", callback_data="qcleanup:confirm")
     b.button(text="❌ انصراف", callback_data="admin:back")
     b.adjust(1)
+    return b.as_markup()
+
+
+def issue_report_reasons_keyboard(duel_id: int, qid: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    reasons = [
+        ("جواب اشتباه است ❌", "wrong_answer"),
+        ("سوال نامفهوم است ❓", "unclear"),
+        ("گزینه‌ها تکراری‌اند 🔁", "duplicate_options"),
+        ("سایر 📝", "other"),
+    ]
+    for text, code in reasons:
+        b.button(text=text, callback_data=f"issue_reason:{code}:{duel_id}:{qid}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def report_admin_keyboard(qid: int, report_id: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="مشاهده سوال 🔍", callback_data=f"qadmin:view:{qid}")
+    b.button(text="حذف سوال 🗑", callback_data=f"qact:delete:{qid}")
+    b.button(text="نادیده گرفتن ✅", callback_data=f"report_ignore:{report_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def question_admin_actions_keyboard(qid: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="ویرایش ✏️", callback_data=f"qact:edit:{qid}")
+    b.button(text="حذف 🗑", callback_data=f"qact:delete:{qid}")
+    b.button(text="غیرفعال ⏸", callback_data=f"qact:disable:{qid}")
+    b.adjust(3)
+    return b.as_markup()
+
+
+def result_report_keyboard(duel_id: int, qid: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="⚠️ گزارش مشکل سوال", callback_data=f"issue_report:{duel_id}:{qid}")
     return b.as_markup()
