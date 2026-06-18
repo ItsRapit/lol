@@ -23,6 +23,8 @@ async def main() -> None:
     db = Database(settings.database_path)
     await db.connect()
     await db.add_owner_admins(settings.owner_ids)
+    if settings.reports_channel_id:
+        await db.set_setting("reports_channel_id", str(settings.reports_channel_id))
 
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     me = await bot.get_me()

@@ -41,8 +41,7 @@ def duel_menu(random_cost: int = 5, friendly_cost: int = 20) -> InlineKeyboardMa
 
 def waiting_queue_keyboard(duel_id: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="❌ خروج از صف و برگشت سکه", callback_data=f"duel:cancel_queue:{duel_id}")
-    b.button(text="↩️ منوی اصلی", callback_data="nav:home")
+    b.button(text="❌ لغو و برگشت سکه", callback_data=f"duel:cancel_queue:{duel_id}")
     b.adjust(1)
     return b.as_markup()
 

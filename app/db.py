@@ -351,8 +351,11 @@ class Database:
             "fast_bonus_xp_0_5": ("5", "Fast answer bonus XP for 0-5 seconds"),
             "fast_bonus_xp_5_10": ("2", "Fast answer bonus XP for 5-10 seconds"),
             "question_auto_disable_reports": ("3", "Auto-disable question after this many reports"),
+            "inactive_forfeit_penalty_coins": ("10", "Penalty after 3 consecutive unanswered questions"),
+            "genre_selection_timeout_seconds": ("60", "Seconds per player for genre selection"),
             "genre_stats_min_answers": ("1", "Minimum answered questions per genre for profile strength/weakness analysis"),
             "payment_card_holder": ("", "Card holder name shown in payment instructions"),
+            "reports_channel_id": ("", "Admin reports/log channel id"),
             "daily_question_limit": ("5", "Daily user submissions"),
             "referral_referrer_coins": ("50", "Referrer coin reward"),
             "referral_referrer_xp": ("50", "Referrer XP reward"),
@@ -754,6 +757,9 @@ class Database:
     async def answered_count_for_question(self, duel_id: int, qid: int) -> int:
         row = await self.fetchone("SELECT COUNT(*) c FROM duel_answers WHERE duel_id=? AND question_id=?", (duel_id, qid))
         return int(row["c"] if row else 0)
+
+    async def has_answered(self, duel_id: int, qid: int, user_id: int) -> bool:
+        return bool(await self.fetchone("SELECT 1 FROM duel_answers WHERE duel_id=? AND question_id=? AND user_id=?", (duel_id, qid, user_id)))
 
     async def mark_powerup(self, duel_id: int, qid: int, user_id: int, powerup: str) -> bool:
         try:
