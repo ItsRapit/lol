@@ -25,7 +25,7 @@ class DuelRuntime:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     question_started_at: float = 0.0
     timeout_task: asyncio.Task | None = None
-    visual_tasks: list[asyncio.Task] = field(default_factory=list)
+    visual_tasks: dict[tuple[int, int], asyncio.Task] = field(default_factory=dict)
 
 
 runtimes: dict[int, DuelRuntime] = {}
@@ -35,6 +35,7 @@ hidden_options_temp: dict[tuple[int, int, int], set[int]] = {}
 second_chance_pending: set[tuple[int, int, int]] = set()
 question_message_ids: dict[tuple[int, int, int], int] = {}
 queue_timeout_tasks: dict[int, asyncio.Task] = {}
+genre_timeout_tasks: dict[int, asyncio.Task] = {}
 
 
 def progress_bar(remaining: int, total: int) -> str:
@@ -45,12 +46,12 @@ def progress_bar(remaining: int, total: int) -> str:
     return "█" * filled + "░" * (10 - filled)
 
 
-async def visual_timer_task(bot: Bot, chat_id: int, message_id: int, base_text: str, total: int, interval: int, reply_markup=None) -> None:
+async def visual_timer_task(bot: Bot, chat_id: int, message_id: int, base_text: str, total: int, interval: int) -> None:
     try:
         for remaining in range(max(0, total - interval), -1, -interval):
             await asyncio.sleep(interval)
             try:
-                await bot.edit_message_text(f"{base_text}\n\n⏱ [{progress_bar(remaining, total)}] {remaining}s", chat_id=chat_id, message_id=message_id, reply_markup=reply_markup)
+                await bot.edit_message_text(f"{base_text}\n\n⏱ [{progress_bar(remaining, total)}] {remaining}s", chat_id=chat_id, message_id=message_id)
             except Exception:
                 logger.debug("Visual timer edit skipped", exc_info=True)
     except asyncio.CancelledError:
@@ -102,6 +103,7 @@ async def random_duel(call: CallbackQuery, db: Database, bot: Bot) -> None:
             duel_id = await db.create_waiting_duel(call.from_user.id)
             timeout = await db.get_int('matchmaking_timeout_seconds', 120)
             queue_timeout_tasks[duel_id] = asyncio.create_task(random_queue_timeout(duel_id, call.from_user.id, cost, timeout, db, bot))
+            await call.message.answer("منوی پایین بسته شد.", reply_markup=ReplyKeyboardRemove())
             await call.message.answer(f"در صف انتظار قرار گرفتی. حداکثر {timeout} ثانیه منتظر حریف می‌مانی. اگر حریفی پیدا نشود، صف لغو و {cost} سکه برگردانده می‌شود.", reply_markup=waiting_queue_keyboard(duel_id))
         await call.answer()
     except Exception:
@@ -223,6 +225,36 @@ async def offer_genres(duel_id: int, db: Database, bot: Bot) -> None:
         user_genre_temp[(duel_id, uid)] = set()
         user_offer_temp[(duel_id, uid)] = offers[uid]
         await bot.send_message(uid, f"از ژانرهای زیر دقیقاً {choose_n} مورد را انتخاب کن:", reply_markup=genres_keyboard(duel_id, offers[uid], set(), choose_n))
+    old_task = genre_timeout_tasks.pop(duel_id, None)
+    if old_task and not old_task.done():
+        old_task.cancel()
+    genre_timeout_tasks[duel_id] = asyncio.create_task(genre_selection_timeout(duel_id, 60, db, bot))
+
+
+async def genre_selection_timeout(duel_id: int, seconds: int, db: Database, bot: Bot) -> None:
+    try:
+        await asyncio.sleep(seconds)
+        duel = await db.get_duel(duel_id)
+        if not duel or duel['status'] != 'genre_selection':
+            return
+        choices = await db.duel_choices(duel_id)
+        if duel['player1_id'] in choices and duel['player2_id'] in choices:
+            return
+        await db.execute_write("UPDATE duels SET status='cancelled', finished_at=? WHERE id=?", (now_iso(), duel_id))
+        if duel['invite_token']:
+            await db.change_coins(duel['player1_id'], await db.get_int('friendly_duel_cost', 20), 'genre_timeout_refund', duel_id)
+        else:
+            cost = await db.get_int('random_duel_cost', 5)
+            await db.change_coins(duel['player1_id'], cost, 'genre_timeout_refund', duel_id)
+            if duel['player2_id']:
+                await db.change_coins(duel['player2_id'], cost, 'genre_timeout_refund', duel_id)
+        for uid in [duel['player1_id'], duel['player2_id']]:
+            if uid:
+                await bot.send_message(uid, "⏱ زمان انتخاب ژانر تمام شد؛ دوئل بسته شد و هزینه ورود برگشت.", reply_markup=main_menu(await db.is_admin(uid)))
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        logger.exception("Genre selection timeout failed")
 
 
 @router.callback_query(F.data.startswith("genre:"))
@@ -268,6 +300,9 @@ async def genre_done(call: CallbackQuery, db: Database, bot: Bot) -> None:
         duel = await db.get_duel(duel_id)
         choices = await db.duel_choices(duel_id)
         if duel and duel['player1_id'] in choices and duel['player2_id'] in choices:
+            gtask = genre_timeout_tasks.pop(duel_id, None)
+            if gtask and not gtask.done():
+                gtask.cancel()
             selected_genres = list(dict.fromkeys(list(choices[duel['player1_id']]) + list(choices[duel['player2_id']])))
             count = await db.get_int('duel_question_count', 7)
             qs = await db.start_duel_questions(duel_id, selected_genres, count)
@@ -306,7 +341,7 @@ async def send_current_question(duel_id: int, db: Database, bot: Bot) -> None:
         rt.question_started_at = time.monotonic()
         base_text = f"سوال {seq + 1}\nID: <code>{q['id']}</code>\n\n{q['text']}"
         text = f"{base_text}\n\n⏱ [{progress_bar(timer, timer)}] {timer}s"
-        for t in rt.visual_tasks:
+        for t in rt.visual_tasks.values():
             if not t.done():
                 t.cancel()
         rt.visual_tasks.clear()
@@ -318,7 +353,7 @@ async def send_current_question(duel_id: int, db: Database, bot: Bot) -> None:
             msg = await bot.send_message(uid, text, reply_markup=markup)
             question_message_ids[(duel_id, uid, q['id'])] = msg.message_id
             if visual_enabled:
-                rt.visual_tasks.append(asyncio.create_task(visual_timer_task(bot, uid, msg.message_id, base_text, timer, interval, markup)))
+                rt.visual_tasks[(uid, q['id'])] = asyncio.create_task(visual_timer_task(bot, uid, msg.message_id, base_text, timer, interval))
         if rt.timeout_task and not rt.timeout_task.done(): 
             rt.timeout_task.cancel()
         rt.timeout_task = asyncio.create_task(timeout_question(duel_id, q['id'], timer, db, bot))
@@ -336,7 +371,7 @@ async def timeout_question(duel_id: int, qid: int, seconds: int, db: Database, b
         await bot.send_message(duel['player1_id'], "زمان سوال تمام شد.")
         await bot.send_message(duel['player2_id'], "زمان سوال تمام شد.")
         rt = runtime(duel_id)
-        for t in rt.visual_tasks:
+        for t in rt.visual_tasks.values():
             if not t.done():
                 t.cancel()
         rt.visual_tasks.clear()
@@ -376,7 +411,10 @@ async def answer_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
             await call.answer("قبلاً پاسخ داده‌ای.", show_alert=True)
             return
         second_chance_pending.discard(pending_key)
-        await call.message.edit_reply_markup(reply_markup=None)
+        user_timer = rt.visual_tasks.pop((call.from_user.id, qid), None)
+        if user_timer and not user_timer.done():
+            user_timer.cancel()
+        base_result_text = f"سوال {duel['current_index'] + 1}\nID: <code>{qid}</code>\n\n{q['text']}"
         if opt == q['correct_option']:
             bonus = 0
             if ms <= 5000:
@@ -388,15 +426,15 @@ async def answer_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
             msg = "✅ آفرین! با شانس دوباره درست زدی." if attempt == 2 else "✅ درست!"
             if bonus:
                 msg += f" ⚡ پاسخ سریع: +{bonus} XP"
-            await call.message.answer(msg, reply_markup=result_report_keyboard(duel_id, qid))
+            await call.message.edit_text(f"{base_result_text}\n\n{msg}", reply_markup=result_report_keyboard(duel_id, qid))
         else:
             msg = "❌ این بار هم اشتباه." if attempt == 2 else "❌ اشتباه!"
             msg += f"\nجواب درست: {correct_text} ✅{explanation}"
-            await call.message.answer(msg, reply_markup=result_report_keyboard(duel_id, qid))
+            await call.message.edit_text(f"{base_result_text}\n\n{msg}", reply_markup=result_report_keyboard(duel_id, qid))
         await call.answer()
         if await db.answered_count_for_question(duel_id, qid) >= 2:
             rt.timeout_task.cancel() if rt.timeout_task and not rt.timeout_task.done() else None
-            for t in rt.visual_tasks:
+            for t in rt.visual_tasks.values():
                 if not t.done():
                     t.cancel()
             rt.visual_tasks.clear()
@@ -478,11 +516,6 @@ async def powerup_callback(call: CallbackQuery, db: Database) -> None:
         if not ok:
             await call.answer("امکان استفاده نیست.", show_alert=True); return
         await db.change_coins(call.from_user.id, -cost, f"powerup_{ptype}", duel_id)
-        rt = runtime(duel_id)
-        for t in rt.visual_tasks:
-            if not t.done():
-                t.cancel()
-        rt.visual_tasks.clear()
         wrong = [i for i in range(1,5) if i != q['correct_option']]
         new_costs = await db.powerup_costs_for_user(duel_id, call.from_user.id)
         hidden_key = (duel_id, call.from_user.id, qid)
