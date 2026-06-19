@@ -76,3 +76,18 @@ Callbackهای پنل ادمین در هر state قابل اجرا هستند و
 ```
 
 ربات یک checkpoint از WAL می‌گیرد، فایل SQLite را کپی می‌کند و همان فایل را برای ادمین ارسال می‌کند.
+
+## Inline Mode و بازی گروهی در گروه‌ها
+
+برای اینکه `@ChalleshinoBot` در گروه‌ها نتیجه inline نشان بدهد، باید در BotFather فعال شود:
+
+1. برو به BotFather
+2. `/mybots` را بزن
+3. ربات را انتخاب کن
+4. Bot Settings → Inline Mode → Turn on
+5. Inline Feedback را روی 100% قرار بده تا `chosen_inline_result` به ربات برسد.
+
+برای اینکه دستور `/quiz` در گروه‌ها همیشه به ربات برسد، یکی از این دو کار لازم است:
+
+- ربات را ادمین گروه کن، یا
+- در BotFather، Group Privacy را خاموش کن.

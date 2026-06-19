@@ -47,7 +47,7 @@ def trim_name(name: str, max_len: int = 20) -> str:
 
 def lobby_keyboard(lobby_id: str) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="✋ پایه‌ام!", callback_data=f"gquiz:join:{lobby_id}")
+    b.button(text="✋ پایه‌ام", callback_data=f"gquiz:join:{lobby_id}")
     b.button(text="🚀 شروع بازی", callback_data=f"gquiz:start:{lobby_id}")
     b.adjust(2)
     return b.as_markup()
@@ -64,7 +64,7 @@ def answer_keyboard(lobby_id: str, q_index: int, q) -> InlineKeyboardMarkup:
 def lobby_text(lobby: GroupLobby, max_players: int) -> str:
     names = "\n".join(f"✅ {trim_name(n)}" for n in lobby.players.values())
     return (
-        "🎮 بازی کوییز گروهی!\n\n"
+        "🎮 بازی گروهی چالشینو\n\n"
         f"👤 {trim_name(lobby.players.get(lobby.starter_id, 'شروع‌کننده'))} یه بازی شروع کرده\n"
         f"👥 شرکت‌کنندگان: {len(lobby.players)}/{max_players}\n\n"
         f"{names}"
@@ -102,31 +102,57 @@ async def group_quiz_start(message: Message, db: Database) -> None:
 
 @router.inline_query()
 async def inline_handler(query: InlineQuery) -> None:
-    name = trim_name(query.from_user.first_name or "بازیکن")
-    result = InlineQueryResultArticle(
+    try:
+        name = trim_name(query.from_user.first_name or "بازیکن")
+        result = InlineQueryResultArticle(
         id="group_quiz",
-        title="🎮 شروع بازی گروهی",
-        description="یه بازی کوییز گروهی توی این چت شروع کن",
+        title="🎮 بازی گروهی",
+        description="همه با هم یه سوال می‌بینن، اولین نفر که درست بزنه امتیاز می‌گیره",
         input_message_content=InputTextMessageContent(
-            message_text=f"🎮 {name} یه بازی گروهی شروع کرده\n👥 شرکت‌کنندگان: 1/8\n\n✅ {name}"
+            message_text=f"🎮 بازی گروهی چالشینو\n\n👤 سازنده: {name}\n👥 شرکت‌کنندگان: 1/8\n\n✅ {name}"
         ),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✋ پایه‌ام", callback_data="group_quiz_join")],
             [InlineKeyboardButton(text="🚀 شروع بازی", callback_data="group_quiz_start")],
         ]),
     )
-    await query.answer([result], cache_time=1)
+        duel_result = InlineQueryResultArticle(
+            id="group_duel",
+            title="⚔️ دوئل گروهی",
+            description="دو نفر با هم دوئل می‌کنن، هر کدوم ژانر انتخاب می‌کنن",
+            input_message_content=InputTextMessageContent(
+                message_text=f"⚔️ دوئل گروهی چالشینو\n\n👤 چالش‌دهنده: {name}\n\nمنتظر حریف..."
+            ),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⚔️ قبول می‌کنم", callback_data="group_duel_accept")],
+            ]),
+        )
+        await query.answer([result, duel_result], cache_time=0)
+    except Exception as e:
+        logger.exception("Inline query error: %s", e)
+        try:
+            await query.answer([], cache_time=0)
+        except Exception:
+            logger.exception("Inline query empty answer failed")
 
 
 @router.chosen_inline_result()
 async def chosen_result_handler(chosen: ChosenInlineResult) -> None:
-    if chosen.result_id != "group_quiz" or not chosen.inline_message_id:
+    if not chosen.inline_message_id:
         return
-    lobby_id = f"inline_{abs(hash(chosen.inline_message_id))}"
-    lobby = GroupLobby(lobby_id=lobby_id, starter_id=chosen.from_user.id, inline_message_id=chosen.inline_message_id)
-    lobby.players[chosen.from_user.id] = chosen.from_user.full_name
-    lobby.usernames[chosen.from_user.id] = chosen.from_user.username
-    lobbies[lobby_id] = lobby
+    if chosen.result_id == "group_quiz":
+        lobby_id = f"inline_{abs(hash(chosen.inline_message_id))}"
+        lobby = GroupLobby(lobby_id=lobby_id, starter_id=chosen.from_user.id, inline_message_id=chosen.inline_message_id)
+        lobby.players[chosen.from_user.id] = chosen.from_user.full_name
+        lobby.usernames[chosen.from_user.id] = chosen.from_user.username
+        lobbies[lobby_id] = lobby
+    elif chosen.result_id == "group_duel":
+        # Minimal inline-duel state stored as a lobby with only challenger.
+        lobby_id = f"gduel_{abs(hash(chosen.inline_message_id))}"
+        lobby = GroupLobby(lobby_id=lobby_id, starter_id=chosen.from_user.id, inline_message_id=chosen.inline_message_id)
+        lobby.players[chosen.from_user.id] = chosen.from_user.full_name
+        lobby.usernames[chosen.from_user.id] = chosen.from_user.username
+        lobbies[lobby_id] = lobby
 
 
 @router.callback_query(F.data.in_({"group_quiz_join_inline", "group_quiz_join"}))
@@ -328,3 +354,40 @@ async def finish_group_game(bot: Bot, db: Database, game: GroupGame) -> None:
             await asyncio.sleep(1)
     games.pop(game.lobby.lobby_id, None)
     lobbies.pop(game.lobby.lobby_id, None)
+
+
+@router.callback_query(F.data == "group_duel_accept")
+async def group_duel_accept(call: CallbackQuery, bot: Bot) -> None:
+    await call.answer()
+    try:
+        inline_id = call.inline_message_id
+        if not inline_id:
+            await call.answer("این دکمه فقط برای inline duel است", show_alert=False)
+            return
+        lobby = next((l for l in lobbies.values() if l.inline_message_id == inline_id and l.lobby_id.startswith("gduel_")), None)
+        if not lobby:
+            lobby_id = f"gduel_{abs(hash(inline_id))}"
+            lobby = GroupLobby(lobby_id=lobby_id, starter_id=call.from_user.id, inline_message_id=inline_id)
+            lobby.players[call.from_user.id] = call.from_user.full_name
+            lobby.usernames[call.from_user.id] = call.from_user.username
+            lobbies[lobby_id] = lobby
+        if call.from_user.id == lobby.starter_id:
+            await call.answer("خودت نمی‌تونی حریف خودت بشی", show_alert=False)
+            return
+        if len(lobby.players) >= 2:
+            await call.answer("این دوئل حریف دارد", show_alert=False)
+            return
+        lobby.players[call.from_user.id] = call.from_user.full_name
+        lobby.usernames[call.from_user.id] = call.from_user.username
+        names = list(lobby.players.values())
+        await bot.edit_message_text(
+            f"⚔️ دوئل گروهی چالشینو\n\n👤 {trim_name(names[0])} vs {trim_name(names[1])}\n\nهر دو نفر ژانر مورد نظرشون رو انتخاب کنن 👇\nبرای ادامه، هر دو نفر باید اول به پیوی ربات پیام داده باشند.",
+            inline_message_id=inline_id,
+            reply_markup=None,
+        )
+    except Exception:
+        logger.exception("Group duel accept failed")
+        try:
+            await call.answer("خطا در قبول دوئل", show_alert=False)
+        except Exception:
+            pass

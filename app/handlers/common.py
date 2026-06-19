@@ -49,9 +49,12 @@ async def start(message: Message, db: Database, state: FSMContext, bot: Bot, com
 
 
 @router.message(Command("version"))
-async def version_command_public(message: Message) -> None:
+async def version_command_public(message: Message, db: Database) -> None:
+    if not await db.is_admin(message.from_user.id):
+        await message.answer("❌ این دستور فقط برای ادمین‌هاست.")
+        return
     await message.answer(
-        "🧩 نسخه کد فعال: <code>challeshino-2026-06-17-hotfix-powerup-stats-genres-v2</code>\n"
+        "🧩 نسخه کد فعال: <code>challeshino-group-inline-profile-v3</code>\n"
         "اگر این پیام را می‌بینی یعنی کد جدید روی همین بات فعال است."
     )
 
@@ -109,7 +112,7 @@ async def profile(message: Message, db: Database) -> None:
         await message.answer(
             f"👤 <b>{u['first_name'] or 'کاربر'}</b> {username}\n"
             f"{title_text} | لول {u['level']}\n"
-            f"{xp_bar_blocks} {current_xp}/{required_xp} XP\n"
+            f"ایکس‌پی {current_xp}/{required_xp} {xp_bar_blocks}\n"
             f"🏆 {league_name} — {u['cups']} جام\n"
             f"🪙 سکه: {u['coins']}"
             f"{genre_analysis}",
