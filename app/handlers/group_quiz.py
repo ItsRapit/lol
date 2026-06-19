@@ -57,6 +57,7 @@ lobbies: dict[str, GroupLobby] = {}
 games: dict[str, GroupGame] = {}
 group_duels: dict[str, GroupDuelGame] = {}
 group_duel_genres: dict[str, dict[int, str]] = {}
+group_duel_offers: dict[str, list[str]] = {}
 
 
 def trim_name(name: str, max_len: int = 20) -> str:
@@ -107,10 +108,15 @@ def group_question_text(game: GroupGame, idx: int, remaining: int, total_seconds
         f"✅ {answered_count}/{total} نفر جواب دادن"
     )
 
-def group_duel_genre_keyboard(lobby_id: str, genres: list[str]) -> InlineKeyboardMarkup:
+def group_duel_genre_keyboard(lobby_id: str, genres: list[str], selected: dict[int, str] | None = None) -> InlineKeyboardMarkup:
+    selected_values = set((selected or {}).values())
     b = InlineKeyboardBuilder()
-    for g in genres[:10]:
-        b.button(text=g, callback_data=f"gduelgenre:{lobby_id}:{g}")
+    for idx, genre in enumerate(genres[:10]):
+        taken = genre in selected_values
+        b.button(
+            text=(f"✅ {genre}" if taken else genre),
+            callback_data=f"gduelgenre:{lobby_id}:{idx}",
+        )
     b.adjust(2)
     return b.as_markup()
 
@@ -540,19 +546,15 @@ async def group_duel_accept(call: CallbackQuery, bot: Bot, db: Database) -> None
         lobby.players[call.from_user.id] = call.from_user.full_name
         lobby.usernames[call.from_user.id] = call.from_user.username
         names = list(lobby.players.values())
-        await bot.edit_message_text(
-            f"⚔️ دوئل چالشینو\n\n👤 {trim_name(names[0])} vs {trim_name(names[1])}\n\nهر دو نفر ژانر مورد نظرشون رو در پیوی انتخاب کنن 👇\n⏳ {trim_name(names[0])}: در حال انتخاب...\n⏳ {trim_name(names[1])}: در حال انتخاب...",
-            inline_message_id=inline_id,
-            reply_markup=None,
-        )
         group_duel_genres[lobby.lobby_id] = {}
         all_genres = await db.all_genres()
-        for uid in lobby.players:
-            try:
-                genres = random.sample(all_genres, min(8, len(all_genres))) if all_genres else []
-                await bot.send_message(uid, "ژانر دوئل را انتخاب کن:", reply_markup=group_duel_genre_keyboard(lobby.lobby_id, genres))
-            except Exception:
-                logger.exception("Could not send group duel genre PM to %s", uid)
+        offers = random.sample(all_genres, min(8, len(all_genres))) if all_genres else []
+        group_duel_offers[lobby.lobby_id] = offers
+        await bot.edit_message_text(
+            f"⚔️ دوئل چالشینو\n\n👤 {trim_name(names[0])} vs {trim_name(names[1])}\n\nهر دو نفر ژانر مورد نظرشون رو همین‌جا انتخاب کنن 👇\n⏳ {trim_name(names[0])}: در حال انتخاب...\n⏳ {trim_name(names[1])}: در حال انتخاب...",
+            inline_message_id=inline_id,
+            reply_markup=group_duel_genre_keyboard(lobby.lobby_id, offers, group_duel_genres[lobby.lobby_id]),
+        )
     except Exception:
         logger.exception("Group duel accept failed")
         try:
@@ -565,25 +567,35 @@ async def group_duel_accept(call: CallbackQuery, bot: Bot, db: Database) -> None
 async def group_duel_genre_selected(call: CallbackQuery, bot: Bot, db: Database) -> None:
     await call.answer()
     try:
-        _, lobby_id, genre = call.data.split(":", 2)
+        _, lobby_id, idx_s = call.data.split(":", 2)
         lobby = lobbies.get(lobby_id)
+        offers = group_duel_offers.get(lobby_id, [])
         if not lobby or call.from_user.id not in lobby.players:
-            await call.message.answer("دوئل پیدا نشد یا شما عضو آن نیستید.")
+            await call.answer("دوئل پیدا نشد یا شما عضو آن نیستید", show_alert=False)
             return
-        group_duel_genres.setdefault(lobby_id, {})[call.from_user.id] = genre
-        await call.message.edit_text(f"✅ ژانر شما ثبت شد: {genre}")
+        try:
+            genre = offers[int(idx_s)]
+        except Exception:
+            await call.answer("ژانر نامعتبر است", show_alert=False)
+            return
+        current = group_duel_genres.setdefault(lobby_id, {})
+        taken_by = next((uid for uid, g in current.items() if g == genre and uid != call.from_user.id), None)
+        if taken_by:
+            await call.answer("این ژانر قبلاً توسط حریف انتخاب شده", show_alert=False)
+            return
+        current[call.from_user.id] = genre
+        lines = []
+        for uid, name in lobby.players.items():
+            g = current.get(uid)
+            lines.append((f"✅ {trim_name(name)}: {g}" if g else f"⏳ {trim_name(name)}: در حال انتخاب..."))
         if lobby.inline_message_id:
-            lines = []
-            for uid, name in lobby.players.items():
-                g = group_duel_genres.get(lobby_id, {}).get(uid)
-                lines.append((f"✅ {trim_name(name)}: {g}" if g else f"⏳ {trim_name(name)}: در حال انتخاب..."))
             await bot.edit_message_text(
                 "⚔️ دوئل چالشینو\n\n" + "\n".join(lines),
                 inline_message_id=lobby.inline_message_id,
-                reply_markup=None,
+                reply_markup=group_duel_genre_keyboard(lobby_id, offers, current),
             )
-        if len(group_duel_genres.get(lobby_id, {})) >= 2:
-            genres = list(group_duel_genres[lobby_id].values())
+        if len(current) >= 2:
+            genres = [current[uid] for uid in lobby.players]
             if lobby.inline_message_id:
                 await bot.edit_message_text(
                     f"⚔️ دوئل چالشینو\n\nژانرها انتخاب شدند:\n{genres[0]} + {genres[1]}\n\n⏳ دوئل در حال شروع...",
@@ -594,7 +606,7 @@ async def group_duel_genre_selected(call: CallbackQuery, bot: Bot, db: Database)
     except Exception:
         logger.exception("Group duel genre select failed")
         try:
-            await call.message.answer("خطا در ثبت ژانر دوئل.")
+            await call.answer("خطا در ثبت ژانر دوئل", show_alert=False)
         except Exception:
             pass
 
@@ -723,3 +735,4 @@ async def finish_group_duel(bot: Bot, db: Database, game: GroupDuelGame) -> None
     group_duels.pop(game.lobby.lobby_id, None)
     lobbies.pop(game.lobby.lobby_id, None)
     group_duel_genres.pop(game.lobby.lobby_id, None)
+    group_duel_offers.pop(game.lobby.lobby_id, None)
