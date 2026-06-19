@@ -85,32 +85,33 @@ async def nav_home(call: CallbackQuery, state: FSMContext, db: Database) -> None
 async def profile(message: Message, db: Database) -> None:
     try:
         u = await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
-        rank = rank_with_emoji(await db.get_rank_title(u['level']))
+        title = await db.user_title(message.from_user.id)
+        if title:
+            title_text = f"{title['emoji'] or ''} {title['name']}".strip()
+        else:
+            title_text = rank_with_emoji(await db.get_rank_title(u['level']))
         league = await db.get_user_league(u['cups'])
         league_name = league_with_emoji(league['name'] if league else 'بدون لیگ')
         cur, nxt = await db.level_bounds(u['level'])
-        total_duels = int(u['wins']) + int(u['losses']) + int(u['draws'])
-        wrong = max(0, int(u['total_answers']) - int(u['correct_answers']))
-        username = f"@{u['username']}" if u['username'] else "—"
-        joined = jalali_date(u['created_at'])
-        last_duel = jalali_datetime(u['last_duel_at']) if 'last_duel_at' in u.keys() and u['last_duel_at'] else '—'
-        xp_bar = xp_progress_text(u['xp'], cur, nxt)
-        level_display = await db.get_level_display(int(u['level']))
+        username = f"@{u['username']}" if u['username'] else ""
+        current_xp = max(0, int(u['xp']) - int(cur))
+        required_xp = max(1, int(nxt) - int(cur))
+        filled = max(0, min(10, int((current_xp / required_xp) * 10)))
+        xp_bar_blocks = "▰" * filled + "▱" * (10 - filled)
         analysis = await db.user_strengths_weaknesses(message.from_user.id)
+        genre_analysis = ""
         if analysis['strengths']:
-            strengths = "\n".join(f"  {'🥇' if i == 0 else '🥈'} {r['genre']} — {int(r['pct'])}% دقت" for i, r in enumerate(analysis['strengths']))
-            weaknesses = "\n".join(f"  📉 {r['genre']} — {int(r['pct'])}% دقت" for r in analysis['weaknesses']) or "  هنوز داده‌ی جداگانه کافی برای ضعف نداری."
-            genre_analysis = f"\n\n💪 نقاط قوت:\n{strengths}\n\n⚠️ نقاط ضعف:\n{weaknesses}"
-        else:
-            genre_analysis = "\n\n📊 هنوز داده‌ی کافی برای تحلیل نداری. بیشتر بازی کن!"
+            strengths = "\n".join(f"🥇 {r['genre']} — {int(r['pct'])}%" if i == 0 else f"🥈 {r['genre']} — {int(r['pct'])}%" for i, r in enumerate(analysis['strengths']))
+            weaknesses = "\n".join(f"📉 {r['genre']} — {int(r['pct'])}%" for r in analysis['weaknesses'])
+            genre_analysis = f"\n\n💪 نقاط قوت:\n{strengths}"
+            if weaknesses:
+                genre_analysis += f"\n\n⚠️ نقاط ضعف:\n{weaknesses}"
         await message.answer(
-            f"👤 <b>{u['first_name'] or 'کاربر'}</b>  {username}\n"
-            f"{rank} | <b>{level_display}</b> | XP {xp_bar}\n"
-            f"🏆 {league_name} — <b>{u['cups']} جام</b>\n"
-            f"🪙 سکه: <b>{u['coins']}</b>\n\n"
-            f"⚔️ دوئل‌ها: {total_duels} | برد <b>{u['wins']}</b> / مساوی {u['draws']} / شکست <b>{u['losses']}</b>\n"
-            f"✅ پاسخ صحیح: {u['correct_answers']} | ❌ غلط: {wrong}\n"
-            f"📅 عضویت: {joined} | آخرین بازی: {last_duel}"
+            f"👤 <b>{u['first_name'] or 'کاربر'}</b> {username}\n"
+            f"{title_text} | لول {u['level']}\n"
+            f"{xp_bar_blocks} {current_xp}/{required_xp} XP\n"
+            f"🏆 {league_name} — {u['cups']} جام\n"
+            f"🪙 سکه: {u['coins']}"
             f"{genre_analysis}",
             reply_markup=back_home_keyboard(),
         )

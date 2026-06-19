@@ -25,6 +25,7 @@ class GroupLobby:
     message_id: int | None = None
     inline_message_id: str | None = None
     players: dict[int, str] = field(default_factory=dict)
+    usernames: dict[int, str | None] = field(default_factory=dict)
     started: bool = False
 
 
@@ -92,6 +93,7 @@ async def group_quiz_start(message: Message, db: Database) -> None:
     lobby_id = f"chat_{abs(message.chat.id)}_{message.message_id}"
     lobby = GroupLobby(lobby_id=lobby_id, starter_id=message.from_user.id, chat_id=message.chat.id)
     lobby.players[message.from_user.id] = message.from_user.full_name
+    lobby.usernames[message.from_user.id] = message.from_user.username
     lobbies[lobby_id] = lobby
     max_players = await db.get_int("group_quiz_max_players", 8)
     msg = await message.answer(lobby_text(lobby, max_players), reply_markup=lobby_keyboard(lobby_id))
@@ -100,16 +102,18 @@ async def group_quiz_start(message: Message, db: Database) -> None:
 
 @router.inline_query()
 async def inline_handler(query: InlineQuery) -> None:
-    text = (query.query or "").lower()
-    if "بازی" not in text and "quiz" not in text:
-        await query.answer([], cache_time=1)
-        return
+    name = trim_name(query.from_user.first_name or "بازیکن")
     result = InlineQueryResultArticle(
         id="group_quiz",
         title="🎮 شروع بازی گروهی",
-        description="یه بازی کوییز گروهی توی این چت شروع کن!",
-        input_message_content=InputTextMessageContent(message_text="🎮 یه بازی گروهی شروع شد!\nبرای شرکت دکمه رو بزن 👇"),
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✋ پایه‌ام!", callback_data="group_quiz_join_inline")]]),
+        description="یه بازی کوییز گروهی توی این چت شروع کن",
+        input_message_content=InputTextMessageContent(
+            message_text=f"🎮 {name} یه بازی گروهی شروع کرده\n👥 شرکت‌کنندگان: 1/8\n\n✅ {name}"
+        ),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✋ پایه‌ام", callback_data="group_quiz_join")],
+            [InlineKeyboardButton(text="🚀 شروع بازی", callback_data="group_quiz_start")],
+        ]),
     )
     await query.answer([result], cache_time=1)
 
@@ -121,10 +125,11 @@ async def chosen_result_handler(chosen: ChosenInlineResult) -> None:
     lobby_id = f"inline_{abs(hash(chosen.inline_message_id))}"
     lobby = GroupLobby(lobby_id=lobby_id, starter_id=chosen.from_user.id, inline_message_id=chosen.inline_message_id)
     lobby.players[chosen.from_user.id] = chosen.from_user.full_name
+    lobby.usernames[chosen.from_user.id] = chosen.from_user.username
     lobbies[lobby_id] = lobby
 
 
-@router.callback_query(F.data == "group_quiz_join_inline")
+@router.callback_query(F.data.in_({"group_quiz_join_inline", "group_quiz_join"}))
 async def inline_join_redirect(call: CallbackQuery, db: Database, bot: Bot) -> None:
     await call.answer()
     inline_id = call.inline_message_id
@@ -136,6 +141,29 @@ async def inline_join_redirect(call: CallbackQuery, db: Database, bot: Bot) -> N
         lobby = GroupLobby(lobby_id=lobby_id, starter_id=call.from_user.id, inline_message_id=inline_id)
         lobbies[lobby_id] = lobby
     await join_lobby(call, db, bot, lobby)
+
+
+@router.callback_query(F.data == "group_quiz_start")
+async def inline_start_game(call: CallbackQuery, db: Database, bot: Bot) -> None:
+    inline_id = call.inline_message_id
+    if not inline_id:
+        await call.answer("بازی پیدا نشد", show_alert=False)
+        return
+    lobby = next((l for l in lobbies.values() if l.inline_message_id == inline_id), None)
+    if not lobby:
+        lobby_id = f"inline_{abs(hash(inline_id))}"
+        lobby = GroupLobby(lobby_id=lobby_id, starter_id=call.from_user.id, inline_message_id=inline_id)
+        lobby.players[call.from_user.id] = call.from_user.full_name
+        lobby.usernames[call.from_user.id] = call.from_user.username
+        lobbies[lobby_id] = lobby
+    if call.from_user.id != lobby.starter_id:
+        await call.answer("فقط کسی که بازی رو شروع کرده می‌تونه از این دکمه استفاده کنه", show_alert=False)
+        return
+    if len(lobby.players) < 2:
+        await call.answer("حداقل 2 نفر لازم است.", show_alert=False)
+        return
+    await call.answer()
+    await start_lobby_game(call, db, bot, lobby)
 
 
 @router.callback_query(F.data.startswith("gquiz:join:"))
@@ -153,32 +181,42 @@ async def join_lobby(call: CallbackQuery, db: Database, bot: Bot, lobby: GroupLo
         await call.answer("ظرفیت تکمیل است.", show_alert=True)
         return
     lobby.players[call.from_user.id] = call.from_user.full_name
+    lobby.usernames[call.from_user.id] = call.from_user.username
     await edit_lobby(bot, lobby, lobby_text(lobby, max_players), lobby_keyboard(lobby.lobby_id))
 
 
 @router.callback_query(F.data.startswith("gquiz:start:"))
 async def group_start_game(call: CallbackQuery, db: Database, bot: Bot) -> None:
-    await call.answer()
     lobby_id = call.data.split(":", 2)[2]
     lobby = lobbies.get(lobby_id)
     if not lobby:
+        await call.answer("بازی پیدا نشد", show_alert=False)
         return
     if call.from_user.id != lobby.starter_id:
-        await call.answer("فقط شروع‌کننده می‌تواند بازی را شروع کند.", show_alert=True)
+        await call.answer("فقط کسی که بازی رو شروع کرده می‌تونه از این دکمه استفاده کنه", show_alert=False)
         return
     if len(lobby.players) < 2:
-        await call.answer("حداقل 2 نفر لازم است.", show_alert=True)
+        await call.answer("حداقل 2 نفر لازم است.", show_alert=False)
         return
-    lobby.started = True
-    await edit_lobby(bot, lobby, "⏳ بازی در حال شروع...", None)
-    count = await db.get_int("group_quiz_question_count", 5)
-    rows = await db.fetchall("SELECT * FROM questions WHERE status='active' ORDER BY RANDOM() LIMIT ?", (count,))
-    if not rows:
-        await edit_lobby(bot, lobby, "سوال فعالی برای بازی گروهی وجود ندارد.", None)
-        return
-    game = GroupGame(lobby=lobby, questions=rows, scores={uid: 0 for uid in lobby.players})
-    games[lobby_id] = game
-    await send_group_question(bot, db, game, 0)
+    await call.answer()
+    await start_lobby_game(call, db, bot, lobby)
+
+
+async def start_lobby_game(call: CallbackQuery, db: Database, bot: Bot, lobby: GroupLobby) -> None:
+    try:
+        lobby.started = True
+        await edit_lobby(bot, lobby, "⏳ بازی در حال شروع...", None)
+        count = await db.get_int("group_quiz_question_count", 5)
+        rows = await db.fetchall("SELECT * FROM questions WHERE status='active' ORDER BY RANDOM() LIMIT ?", (count,))
+        if not rows:
+            await edit_lobby(bot, lobby, "سوال فعالی برای بازی گروهی وجود ندارد.", None)
+            return
+        game = GroupGame(lobby=lobby, questions=rows, scores={uid: 0 for uid in lobby.players})
+        games[lobby.lobby_id] = game
+        await send_group_question(bot, db, game, 0)
+    except Exception as e:
+        logger.exception("Group quiz start error: %s", e)
+        await edit_lobby(bot, lobby, "❌ خطا در شروع بازی. دوباره امتحان کن.", None)
 
 
 async def send_group_question(bot: Bot, db: Database, game: GroupGame, idx: int) -> None:
@@ -242,17 +280,51 @@ async def resolve_group_question(bot: Bot, db: Database, game: GroupGame, idx: i
     await send_group_question(bot, db, game, idx + 1)
 
 
+async def notify_levelup_in_group(bot: Bot, chat_id: int, username: str, old_level: int, new_level: int, new_title: str) -> None:
+    frames = [
+        "⬆️ ...",
+        "⬆️⬆️ ...",
+        "⬆️⬆️⬆️ ...",
+        f"🎉 تبریک {username}\n━━━━━━━━━━━\nلول {old_level} ← لول {new_level}\n{new_title}\n━━━━━━━━━━━",
+    ]
+    try:
+        msg = await bot.send_message(chat_id, frames[0])
+        for frame in frames[1:]:
+            await asyncio.sleep(0.6)
+            try:
+                await msg.edit_text(frame)
+            except Exception:
+                logger.debug("Group levelup animation edit skipped", exc_info=True)
+    except Exception:
+        logger.exception("Group levelup notification failed")
+
+
 async def finish_group_game(bot: Bot, db: Database, game: GroupGame) -> None:
     max_score = max(game.scores.values() or [0])
     sorted_players = sorted(game.lobby.players.items(), key=lambda kv: game.scores.get(kv[0], 0), reverse=True)
     lines = []
+    levelups: list[tuple[int, str, int, int, str]] = []
     for pos, (uid, name) in enumerate(sorted_players, 1):
         score = game.scores.get(uid, 0)
         xp = 20 if score == max_score and score > 0 else score * 5
+        old_user = await db.get_user(uid)
+        old_level = int(old_user['level']) if old_user else 1
         if xp:
             await db.change_xp(uid, xp, "group_quiz")
+            await db.sync_user_title(uid)
+        new_user = await db.get_user(uid)
+        new_level = int(new_user['level']) if new_user else old_level
+        if new_level > old_level:
+            title = await db.user_title(uid)
+            title_text = f"{title['emoji'] or ''} {title['name']}".strip() if title else await db.get_level_display(new_level)
+            mention = f"@{game.lobby.usernames.get(uid)}" if game.lobby.usernames.get(uid) else trim_name(name)
+            levelups.append((uid, mention, old_level, new_level, title_text))
         lines.append(f"{pos}. {trim_name(name)} — {score}/{len(game.questions)} ✅ (+{xp} XP)")
     text = "🏆 نتیجه‌ی بازی\n━━━━━━━━━━━━━━\n" + "\n".join(lines) + "\n━━━━━━━━━━━━━━"
     await edit_lobby(bot, game.lobby, text, None)
+    if game.lobby.chat_id:
+        for _, mention, old_level, new_level, title_text in levelups:
+            await notify_levelup_in_group(bot, game.lobby.chat_id, mention, old_level, new_level, title_text)
+            await asyncio.sleep(1)
     games.pop(game.lobby.lobby_id, None)
     lobbies.pop(game.lobby.lobby_id, None)

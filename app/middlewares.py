@@ -22,8 +22,8 @@ class AccessGuardMiddleware(BaseMiddleware):
                             InlineKeyboardButton(text="🎯 شروع بازی", url=f"https://t.me/{bot_username}" if bot_username else "https://t.me/")
                         ]])
                         await event.answer(
-                            "🎮 سلام! ربات کوییز دوئلی اینجاست!\n\n"
-                            "برای بازی گروهی:\n👉 دستور /quiz رو بزن یا\n👉 بنویس @" + (bot_username or "BOT") + " بازی گروهی\n\n"
+                            "🎮 سلام، چالشینو اینجاست\n\n"
+                            "برای بازی گروهی:\n👉 دستور /quiz رو بزن یا\n👉 بنویس @" + (bot_username or "ChalleshinoBot") + " بازی گروهی\n\n"
                             "برای بازی تک‌نفره و دوئل:\n👉 به پیوی ربات بیا 👇",
                             reply_markup=kb,
                         )
@@ -43,7 +43,7 @@ class AccessGuardMiddleware(BaseMiddleware):
             elif isinstance(event, CallbackQuery):
                 logger.info("Callback received: data=%s from=%s chat_type=%s", event.data, event.from_user.id if event.from_user else None, event.message.chat.type if event.message else None)
                 if event.message and event.message.chat.type != "private":
-                    allowed_prefixes = ("tx:", "qrev:", "qadmin:", "qact:", "report_ignore:", "gquiz:", "group_quiz_join_inline")
+                    allowed_prefixes = ("tx:", "qrev:", "qadmin:", "qact:", "report_ignore:", "gquiz:", "group_quiz_join_inline", "group_quiz_join", "group_quiz_start")
                     if not (event.data or "").startswith(allowed_prefixes):
                         return None
                 if db and event.from_user and await db.get_int("maintenance_mode", 0) == 1 and not await db.is_admin(event.from_user.id):
