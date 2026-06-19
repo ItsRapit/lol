@@ -377,6 +377,8 @@ class Database:
             "group_quiz_entry_cost": ("0", "Entry cost for group quiz; currently XP-only rewards"),
             "payment_card_holder": ("", "Card holder name shown in payment instructions"),
             "reports_channel_id": ("", "Admin reports/log channel id"),
+            "force_join_enabled": ("0", "Enable force join channel before games"),
+            "force_join_channel": ("", "Force join channel username or id"),
             "levelup_anim1_step1": ("⬆️ داری لول آپ می‌کنی...", "Level-up animation 1 step 1"),
             "levelup_anim1_step2": ("⬆️⬆️ داری لول آپ می‌کنی...", "Level-up animation 1 step 2"),
             "levelup_anim1_step3": ("🎉 لول آپ!\nبه {level_name} رسیدی!\nلول {old_level} ← لول {new_level}", "Level-up animation 1 final"),

@@ -101,6 +101,33 @@ def group_duel_genre_keyboard(lobby_id: str, genres: list[str]) -> InlineKeyboar
     return b.as_markup()
 
 
+async def check_channel_membership(bot: Bot, user_id: int, channel_id: str) -> bool:
+    try:
+        member = await bot.get_chat_member(channel_id, user_id)
+        return member.status not in {"left", "kicked", "banned"}
+    except Exception:
+        logger.exception("Force join check failed; allowing user")
+        return True
+
+
+async def require_force_join(call: CallbackQuery, db: Database, bot: Bot) -> bool:
+    enabled = await db.get_int("force_join_enabled", 0)
+    channel = await db.get_setting("force_join_channel", "")
+    if not enabled or not channel:
+        return True
+    ok = await check_channel_membership(bot, call.from_user.id, channel)
+    if ok:
+        return True
+    await call.answer(f"برای بازی باید عضو کانال {channel} باشی", show_alert=True)
+    url = f"https://t.me/{channel.lstrip('@')}" if channel.startswith('@') else None
+    if url and call.message:
+        await call.message.answer(
+            "برای استفاده از چالشینو باید عضو کانال ما باشی 👇",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="عضویت در کانال", url=url)]])
+        )
+    return False
+
+
 def lobby_keyboard(lobby_id: str) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="✋ پایه‌ام", callback_data=f"gquiz:join:{lobby_id}")
@@ -121,7 +148,7 @@ def lobby_text(lobby: GroupLobby, max_players: int) -> str:
     names = "\n".join(f"✅ {trim_name(n)}" for n in lobby.players.values())
     return (
         "🎮 بازی گروهی چالشینو\n\n"
-        f"👤 {trim_name(lobby.players.get(lobby.starter_id, 'شروع‌کننده'))} یه بازی شروع کرده\n"
+        f"👤 سازنده: {trim_name(lobby.players.get(lobby.starter_id, 'شروع‌کننده'))}\n"
         f"👥 شرکت‌کنندگان: {len(lobby.players)}/{max_players}\n\n"
         f"{names}"
     )
@@ -157,15 +184,16 @@ async def group_quiz_start(message: Message, db: Database) -> None:
 
 
 @router.inline_query()
-async def inline_handler(query: InlineQuery) -> None:
+async def inline_handler(query: InlineQuery, db: Database) -> None:
     try:
         name = trim_name(query.from_user.first_name or "بازیکن")
+        max_players = await db.get_int("group_quiz_max_players", 8)
         result = InlineQueryResultArticle(
         id="group_quiz",
         title="🎮 بازی گروهی",
         description="همه با هم یه سوال می‌بینن، اولین نفر که درست بزنه امتیاز می‌گیره",
         input_message_content=InputTextMessageContent(
-            message_text=f"🎮 بازی گروهی چالشینو\n\n👤 سازنده: {name}\n👥 شرکت‌کنندگان: 1/8\n\n✅ {name}"
+            message_text=f"🎮 بازی گروهی چالشینو\n\n👤 سازنده: {name}\n👥 شرکت‌کنندگان: 1/{max_players}\n\n✅ {name}"
         ),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✋ پایه‌ام", callback_data="group_quiz_join")],
@@ -174,10 +202,10 @@ async def inline_handler(query: InlineQuery) -> None:
     )
         duel_result = InlineQueryResultArticle(
             id="group_duel",
-            title="⚔️ دوئل گروهی",
+            title="⚔️ دوئل",
             description="دو نفر با هم دوئل می‌کنن، هر کدوم ژانر انتخاب می‌کنن",
             input_message_content=InputTextMessageContent(
-                message_text=f"⚔️ دوئل گروهی چالشینو\n\n👤 چالش‌دهنده: {name}\n\nمنتظر حریف..."
+                message_text=f"⚔️ دوئل چالشینو\n\n👤 چالش‌دهنده: {name}\n\nمنتظر حریف..."
             ),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="⚔️ قبول می‌کنم", callback_data="group_duel_accept")],
@@ -193,7 +221,7 @@ async def inline_handler(query: InlineQuery) -> None:
 
 
 @router.chosen_inline_result()
-async def chosen_result_handler(chosen: ChosenInlineResult) -> None:
+async def chosen_result_handler(chosen: ChosenInlineResult, bot: Bot, db: Database) -> None:
     if not chosen.inline_message_id:
         return
     if chosen.result_id == "group_quiz":
@@ -202,6 +230,10 @@ async def chosen_result_handler(chosen: ChosenInlineResult) -> None:
         lobby.players[chosen.from_user.id] = chosen.from_user.full_name
         lobby.usernames[chosen.from_user.id] = chosen.from_user.username
         lobbies[lobby_id] = lobby
+        try:
+            await edit_lobby(bot, lobby, lobby_text(lobby, await db.get_int("group_quiz_max_players", 8)), lobby_keyboard(lobby_id))
+        except Exception:
+            logger.exception("Could not normalize inline quiz lobby")
     elif chosen.result_id == "group_duel":
         # Minimal inline-duel state stored as a lobby with only challenger.
         lobby_id = f"gduel_{abs(hash(chosen.inline_message_id))}"
@@ -237,6 +269,8 @@ async def inline_start_game(call: CallbackQuery, db: Database, bot: Bot) -> None
     if call.from_user.id != lobby.starter_id:
         await call.answer("فقط کسی که بازی رو شروع کرده می‌تونه از این دکمه استفاده کنه", show_alert=False)
         return
+    if not await require_force_join(call, db, bot):
+        return
     if len(lobby.players) < 2:
         await call.answer("حداقل 2 نفر لازم است.", show_alert=False)
         return
@@ -254,6 +288,8 @@ async def group_join(call: CallbackQuery, db: Database, bot: Bot) -> None:
 
 
 async def join_lobby(call: CallbackQuery, db: Database, bot: Bot, lobby: GroupLobby) -> None:
+    if not await require_force_join(call, db, bot):
+        return
     max_players = await db.get_int("group_quiz_max_players", 8)
     if len(lobby.players) >= max_players and call.from_user.id not in lobby.players:
         await call.answer("ظرفیت تکمیل است.", show_alert=True)
@@ -272,6 +308,8 @@ async def group_start_game(call: CallbackQuery, db: Database, bot: Bot) -> None:
         return
     if call.from_user.id != lobby.starter_id:
         await call.answer("فقط کسی که بازی رو شروع کرده می‌تونه از این دکمه استفاده کنه", show_alert=False)
+        return
+    if not await require_force_join(call, db, bot):
         return
     if len(lobby.players) < 2:
         await call.answer("حداقل 2 نفر لازم است.", show_alert=False)
