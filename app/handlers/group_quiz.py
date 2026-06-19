@@ -151,16 +151,10 @@ async def require_force_join(call: CallbackQuery, db: Database, bot: Bot) -> boo
 async def require_registered_and_join(call: CallbackQuery, db: Database, bot: Bot) -> bool:
     user = await db.get_user(call.from_user.id)
     if not user:
-        await call.answer("برای شرکت در بازی اول باید ربات را در پیوی استارت کنید", show_alert=True)
-        if call.message:
-            try:
-                me = await bot.get_me()
-                await call.message.answer(
-                    "برای شرکت در بازی اول باید ربات را در پیوی استارت کنید 👇",
-                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎯 شروع ربات", url=f"https://t.me/{me.username}")]])
-                )
-            except Exception:
-                logger.exception("Could not send start bot prompt")
+        await call.answer(
+            text="برای شرکت در بازی، ابتدا ربات را استارت کنید 👇 @ChalleshinoBot",
+            show_alert=True,
+        )
         return False
     return await require_force_join(call, db, bot)
 
@@ -289,7 +283,6 @@ async def chosen_result_handler(chosen: ChosenInlineResult, bot: Bot, db: Databa
 
 @router.callback_query(F.data.in_({"group_quiz_join_inline", "group_quiz_join"}))
 async def inline_join_redirect(call: CallbackQuery, db: Database, bot: Bot) -> None:
-    await call.answer()
     inline_id = call.inline_message_id
     if not inline_id:
         return
@@ -324,7 +317,6 @@ async def inline_start_game(call: CallbackQuery, db: Database, bot: Bot) -> None
 
 @router.callback_query(F.data.startswith("gquiz:join:"))
 async def group_join(call: CallbackQuery, db: Database, bot: Bot) -> None:
-    await call.answer()
     lobby_id = call.data.split(":", 2)[2]
     lobby = lobbies.get(lobby_id)
     if lobby:
@@ -334,6 +326,7 @@ async def group_join(call: CallbackQuery, db: Database, bot: Bot) -> None:
 async def join_lobby(call: CallbackQuery, db: Database, bot: Bot, lobby: GroupLobby) -> None:
     if not await require_registered_and_join(call, db, bot):
         return
+    await call.answer()
     max_players = await db.get_int("group_quiz_max_players", 8)
     if len(lobby.players) >= max_players and call.from_user.id not in lobby.players:
         await call.answer("ظرفیت تکمیل است.", show_alert=True)
@@ -522,10 +515,10 @@ async def finish_group_game(bot: Bot, db: Database, game: GroupGame) -> None:
 
 @router.callback_query(F.data == "group_duel_accept")
 async def group_duel_accept(call: CallbackQuery, bot: Bot, db: Database) -> None:
-    await call.answer()
     try:
         if not await require_registered_and_join(call, db, bot):
             return
+        await call.answer()
         inline_id = call.inline_message_id
         if not inline_id:
             await call.answer("این دکمه فقط برای inline duel است", show_alert=False)
