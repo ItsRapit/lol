@@ -36,14 +36,69 @@ class GroupGame:
     scores: dict[int, int] = field(default_factory=dict)
     answered: dict[int, dict[int, int]] = field(default_factory=dict)  # q_index -> user_id -> option
     resolved: set[int] = field(default_factory=set)
+    remaining: dict[int, int] = field(default_factory=dict)
+    timer_tasks: dict[int, asyncio.Task] = field(default_factory=dict)
 
 
 lobbies: dict[str, GroupLobby] = {}
 games: dict[str, GroupGame] = {}
+group_duel_genres: dict[str, dict[int, str]] = {}
 
 
 def trim_name(name: str, max_len: int = 20) -> str:
     return name if len(name) <= max_len else name[:max_len] + "..."
+
+
+def bar(remaining: int, total: int) -> str:
+    filled = max(0, min(10, round((remaining / max(1, total)) * 10)))
+    return "▰" * filled + "▱" * (10 - filled)
+
+
+def player_progress_lines(game: GroupGame, current_idx: int) -> str:
+    lines = []
+    for uid, name in game.lobby.players.items():
+        marks = []
+        for i in range(len(game.questions)):
+            if i > current_idx:
+                marks.append("⬜")
+                continue
+            ans = game.answered.get(i, {}).get(uid)
+            if ans is None:
+                marks.append("⬜")
+            else:
+                marks.append("✅" if ans == int(game.questions[i]['correct_option']) else "❌")
+        lines.append(f"\u200f{trim_name(name)} {''.join(marks)}")
+    return "\n".join(lines)
+
+
+def group_question_text(game: GroupGame, idx: int, remaining: int, total_seconds: int, resolved: bool = False) -> str:
+    q = game.questions[idx]
+    answered_count = len(game.answered.get(idx, {}))
+    total = len(game.lobby.players)
+    if resolved:
+        opts = [q['option1'], q['option2'], q['option3'], q['option4']]
+        correct = opts[int(q['correct_option']) - 1]
+        return (
+            f"❓ سوال {idx+1} از {len(game.questions)}\n"
+            f"━━━━━━━━━━━━━━\n{q['text']}\n━━━━━━━━━━━━━━\n"
+            f"✅ جواب درست: {correct}\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"{player_progress_lines(game, idx)}"
+        )
+    return (
+        f"❓ سوال {idx+1} از {len(game.questions)}\n"
+        f"━━━━━━━━━━━━━━\n{q['text']}\n━━━━━━━━━━━━━━\n"
+        f"⏱️ {bar(remaining, total_seconds)} {remaining}s\n"
+        f"{player_progress_lines(game, idx)}\n"
+        f"✅ {answered_count}/{total} نفر جواب دادن"
+    )
+
+def group_duel_genre_keyboard(lobby_id: str, genres: list[str]) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for g in genres[:10]:
+        b.button(text=g, callback_data=f"gduelgenre:{lobby_id}:{g}")
+    b.adjust(2)
+    return b.as_markup()
 
 
 def lobby_keyboard(lobby_id: str) -> InlineKeyboardMarkup:
@@ -248,14 +303,14 @@ async def send_group_question(bot: Bot, db: Database, game: GroupGame, idx: int)
         return
     q = game.questions[idx]
     game.answered[idx] = {}
-    total = len(game.lobby.players)
-    text = f"❓ سوال {idx+1} از {len(game.questions)}\n━━━━━━━━━━━━━━\n{q['text']}\n━━━━━━━━━━━━━━\n⏱ ▰▰▰▰▰▰▰▰▰▰ {await db.get_int('group_quiz_timer_seconds', 30)}s\n\n✅ 0/{total} نفر جواب دادن"
-    if game.lobby.inline_message_id:
-        await bot.edit_message_text(text, inline_message_id=game.lobby.inline_message_id, reply_markup=answer_keyboard(game.lobby.lobby_id, idx, q))
-    else:
-        msg = await bot.send_message(game.lobby.chat_id, text, reply_markup=answer_keyboard(game.lobby.lobby_id, idx, q))
-        game.lobby.message_id = msg.message_id
-    asyncio.create_task(group_question_timeout(bot, db, game, idx, await db.get_int('group_quiz_timer_seconds', 30)))
+    total_seconds = await db.get_int('group_quiz_timer_seconds', 30)
+    game.remaining[idx] = total_seconds
+    text = group_question_text(game, idx, total_seconds, total_seconds)
+    await edit_lobby(bot, game.lobby, text, answer_keyboard(game.lobby.lobby_id, idx, q))
+    old_task = game.timer_tasks.get(idx)
+    if old_task and not old_task.done():
+        old_task.cancel()
+    game.timer_tasks[idx] = asyncio.create_task(group_question_timeout(bot, db, game, idx, total_seconds))
 
 
 @router.callback_query(F.data.startswith("gquiz:ans:"))
@@ -266,8 +321,11 @@ async def group_answer(call: CallbackQuery, db: Database, bot: Bot) -> None:
     if not game:
         return
     idx, opt = int(idx_s), int(opt_s)
+    if idx in game.resolved:
+        await call.answer("این سوال تمام شده", show_alert=False)
+        return
     if call.from_user.id not in game.lobby.players:
-        await call.answer("شما عضو این بازی نیستید.", show_alert=True)
+        await call.answer("شما عضو این بازی نیستید", show_alert=True)
         return
     if call.from_user.id in game.answered.setdefault(idx, {}):
         await call.answer("قبلاً پاسخ دادی", show_alert=False)
@@ -275,19 +333,33 @@ async def group_answer(call: CallbackQuery, db: Database, bot: Bot) -> None:
     game.answered[idx][call.from_user.id] = opt
     total = len(game.lobby.players)
     q = game.questions[idx]
-    text = f"❓ سوال {idx+1} از {len(game.questions)}\n━━━━━━━━━━━━━━\n{q['text']}\n━━━━━━━━━━━━━━\n✅ {len(game.answered[idx])}/{total} نفر جواب دادن"
-    await edit_lobby(bot, game.lobby, text, answer_keyboard(lobby_id, idx, q))
+    remaining = game.remaining.get(idx, await db.get_int('group_quiz_timer_seconds', 30))
+    total_seconds = await db.get_int('group_quiz_timer_seconds', 30)
+    await edit_lobby(bot, game.lobby, group_question_text(game, idx, remaining, total_seconds), answer_keyboard(lobby_id, idx, q))
     if len(game.answered[idx]) >= total:
+        task = game.timer_tasks.get(idx)
+        if task and not task.done():
+            task.cancel()
         await resolve_group_question(bot, db, game, idx)
 
 
 async def group_question_timeout(bot: Bot, db: Database, game: GroupGame, idx: int, seconds: int) -> None:
     try:
-        await asyncio.sleep(seconds)
-        if idx in game.resolved:
-            return
-        if idx in game.answered and len(game.answered[idx]) < len(game.lobby.players):
+        step = 6
+        remaining = seconds
+        while remaining > 0:
+            await asyncio.sleep(min(step, remaining))
+            if idx in game.resolved:
+                return
+            remaining = max(0, remaining - step)
+            game.remaining[idx] = remaining
+            await edit_lobby(bot, game.lobby, group_question_text(game, idx, remaining, seconds), answer_keyboard(game.lobby.lobby_id, idx, game.questions[idx]))
+            if len(game.answered.get(idx, {})) >= len(game.lobby.players):
+                return
+        if idx not in game.resolved:
             await resolve_group_question(bot, db, game, idx)
+    except asyncio.CancelledError:
+        return
     except Exception:
         logger.exception("Group question timeout failed")
 
@@ -305,8 +377,7 @@ async def resolve_group_question(bot: Bot, db: Database, game: GroupGame, idx: i
             game.scores[uid] = game.scores.get(uid, 0) + 1
         mark = "✅" if ok else "❌"
         lines.append(f"{mark} \u200f{trim_name(name)}\n▰⬜⬜⬜⬜")
-    opts = [q['option1'], q['option2'], q['option3'], q['option4']]
-    text = f"❓ سوال {idx+1} از {len(game.questions)}\n{q['text']}\n━━━━━━━━━━━━━━\n✅ جواب درست: {opts[correct-1]}\n━━━━━━━━━━━━━━\n\n" + "\n\n".join(lines)
+    text = group_question_text(game, idx, game.remaining.get(idx, 0), await db.get_int('group_quiz_timer_seconds', 30), resolved=True)
     await edit_lobby(bot, game.lobby, text, None)
     await asyncio.sleep(2)
     await send_group_question(bot, db, game, idx + 1)
@@ -366,7 +437,7 @@ async def finish_group_game(bot: Bot, db: Database, game: GroupGame) -> None:
 
 
 @router.callback_query(F.data == "group_duel_accept")
-async def group_duel_accept(call: CallbackQuery, bot: Bot) -> None:
+async def group_duel_accept(call: CallbackQuery, bot: Bot, db: Database) -> None:
     await call.answer()
     try:
         inline_id = call.inline_message_id
@@ -390,13 +461,57 @@ async def group_duel_accept(call: CallbackQuery, bot: Bot) -> None:
         lobby.usernames[call.from_user.id] = call.from_user.username
         names = list(lobby.players.values())
         await bot.edit_message_text(
-            f"⚔️ دوئل گروهی چالشینو\n\n👤 {trim_name(names[0])} vs {trim_name(names[1])}\n\nهر دو نفر ژانر مورد نظرشون رو انتخاب کنن 👇\nبرای ادامه، هر دو نفر باید اول به پیوی ربات پیام داده باشند.",
+            f"⚔️ دوئل چالشینو\n\n👤 {trim_name(names[0])} vs {trim_name(names[1])}\n\nهر دو نفر ژانر مورد نظرشون رو در پیوی انتخاب کنن 👇\n⏳ {trim_name(names[0])}: در حال انتخاب...\n⏳ {trim_name(names[1])}: در حال انتخاب...",
             inline_message_id=inline_id,
             reply_markup=None,
         )
+        group_duel_genres[lobby.lobby_id] = {}
+        genres = await db.all_genres()
+        for uid in lobby.players:
+            try:
+                await bot.send_message(uid, "ژانر دوئل را انتخاب کن:", reply_markup=group_duel_genre_keyboard(lobby.lobby_id, genres))
+            except Exception:
+                logger.exception("Could not send group duel genre PM to %s", uid)
     except Exception:
         logger.exception("Group duel accept failed")
         try:
             await call.answer("خطا در قبول دوئل", show_alert=False)
+        except Exception:
+            pass
+
+
+@router.callback_query(F.data.startswith("gduelgenre:"))
+async def group_duel_genre_selected(call: CallbackQuery, bot: Bot, db: Database) -> None:
+    await call.answer()
+    try:
+        _, lobby_id, genre = call.data.split(":", 2)
+        lobby = lobbies.get(lobby_id)
+        if not lobby or call.from_user.id not in lobby.players:
+            await call.message.answer("دوئل پیدا نشد یا شما عضو آن نیستید.")
+            return
+        group_duel_genres.setdefault(lobby_id, {})[call.from_user.id] = genre
+        await call.message.edit_text(f"✅ ژانر شما ثبت شد: {genre}")
+        if lobby.inline_message_id:
+            lines = []
+            for uid, name in lobby.players.items():
+                g = group_duel_genres.get(lobby_id, {}).get(uid)
+                lines.append((f"✅ {trim_name(name)}: {g}" if g else f"⏳ {trim_name(name)}: در حال انتخاب..."))
+            await bot.edit_message_text(
+                "⚔️ دوئل چالشینو\n\n" + "\n".join(lines),
+                inline_message_id=lobby.inline_message_id,
+                reply_markup=None,
+            )
+        if len(group_duel_genres.get(lobby_id, {})) >= 2:
+            genres = list(group_duel_genres[lobby_id].values())
+            if lobby.inline_message_id:
+                await bot.edit_message_text(
+                    f"⚔️ دوئل چالشینو\n\nژانرها انتخاب شدند:\n{genres[0]} + {genres[1]}\n\nنسخه کامل اجرای سوالات دوئل گروهی در حال آماده‌سازی است.",
+                    inline_message_id=lobby.inline_message_id,
+                    reply_markup=None,
+                )
+    except Exception:
+        logger.exception("Group duel genre select failed")
+        try:
+            await call.message.answer("خطا در ثبت ژانر دوئل.")
         except Exception:
             pass
