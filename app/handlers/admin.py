@@ -100,6 +100,23 @@ async def format_question_admin_text(db: Database, qid: int) -> str | None:
     )
 
 
+@router.message(Command("migrate_xp_curve"))
+async def migrate_xp_curve_command(message: Message, db: Database) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        backup = await db.migrate_xp_curve_v2()
+        await db.log_admin(message.from_user.id, "migrate_xp_curve_v2", details=backup)
+        await message.answer(
+            "✅ منحنی XP جدید اعمال شد و level کاربران دوباره محاسبه شد.\n"
+            f"قبل از migration بک‌آپ کاربران ذخیره شد:\n<code>{backup}</code>\n\n"
+            f"XP لازم برای لول 100: {await db.xp_required_for_level(100)}"
+        )
+    except Exception:
+        logger.exception("XP curve migration failed")
+        await message.answer("خطا در migration منحنی XP.")
+
+
 @router.message(Command("setlevel"))
 async def setlevel_command(message: Message, db: Database) -> None:
     try:

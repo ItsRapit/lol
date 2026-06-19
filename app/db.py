@@ -361,7 +361,7 @@ class Database:
             "winner_bonus_xp": ("20", "XP bonus for duel winner"),
             "powerup_remove2_cost": ("15", "Cost of remove two options powerup"),
             "powerup_second_chance_cost": ("20", "Cost of second chance powerup"),
-            "powerup_max_uses_per_duel": ("5", "Maximum total powerup uses per user per duel"),
+            "powerup_max_uses_per_duel": ("3", "Maximum uses per powerup per user per duel"),
             "question_approval_reward_coins": ("20", "Coins rewarded to user when submitted question is approved"),
             "visual_timer_enabled": ("1", "Enable visual progress timer edits"),
             "visual_timer_interval_seconds": ("6", "Visual timer edit interval"),
@@ -371,6 +371,10 @@ class Database:
             "inactive_forfeit_penalty_coins": ("10", "Penalty after 3 consecutive unanswered questions"),
             "genre_selection_timeout_seconds": ("60", "Seconds per player for genre selection"),
             "genre_stats_min_answers": ("1", "Minimum answered questions per genre for profile strength/weakness analysis"),
+            "group_quiz_max_players": ("8", "Max players in group quiz"),
+            "group_quiz_question_count": ("5", "Question count in group quiz"),
+            "group_quiz_timer_seconds": ("30", "Seconds per group quiz question"),
+            "group_quiz_entry_cost": ("0", "Entry cost for group quiz; currently XP-only rewards"),
             "payment_card_holder": ("", "Card holder name shown in payment instructions"),
             "reports_channel_id": ("", "Admin reports/log channel id"),
             "levelup_anim1_step1": ("⬆️ داری لول آپ می‌کنی...", "Level-up animation 1 step 1"),
@@ -555,6 +559,12 @@ class Database:
         await self.execute_write("INSERT INTO xp_events(user_id,amount,reason,duel_id,created_at) VALUES(?,?,?,?,?)", (tg_id, amount, reason, duel_id, now_iso()))
         await self.recalculate_level(tg_id)
 
+    def new_curve_cumulative_xp(self, level: int) -> int:
+        # Calibrated: sum from level 1 to 100 ~= 700,000 XP, with early levels still at least 100 XP.
+        if level <= 1:
+            return 0
+        return sum(max(100, int(5 * (n ** 1.8))) for n in range(1, level))
+
     async def xp_required_for_level(self, level: int) -> int:
         try:
             row = await self.fetchone("SELECT xp_required FROM level_config WHERE level_number=?", (level,))
@@ -562,8 +572,7 @@ class Database:
                 return int(row["xp_required"])
         except Exception:
             logger.debug("level_config not ready; using formula", exc_info=True)
-        factor = await self.get_int("xp_level_curve_factor", 112)
-        return int(factor * max(0, level - 1) ** 2)
+        return self.new_curve_cumulative_xp(level)
 
     async def get_level_display(self, level: int) -> str:
         row = await self.fetchone("SELECT name,emoji FROM level_config WHERE level_number=?", (level,))
@@ -583,6 +592,18 @@ class Database:
                                   VALUES(?,?,?,?,?)
                                   ON CONFLICT(level_number) DO UPDATE SET name=excluded.name, emoji=excluded.emoji, xp_required=excluded.xp_required, updated_at=excluded.updated_at""",
                                  (level, name, emoji, xp_required, now_iso()))
+
+
+    async def migrate_xp_curve_v2(self) -> str:
+        backup_path = await self.export_section_backup('users')
+        max_level = await self.get_int('max_level', 100)
+        for level in range(1, max_level + 1):
+            await self.set_level_config(level, None, None, self.new_curve_cumulative_xp(level))
+        users = await self.fetchall("SELECT telegram_id FROM users")
+        for u in users:
+            await self.recalculate_level(u['telegram_id'])
+        await self.set_setting('xp_curve_version', 'v2_700k')
+        return backup_path
 
     async def level_config_rows(self) -> list[aiosqlite.Row]:
         return await self.fetchall("SELECT * FROM level_config ORDER BY level_number LIMIT 120")
@@ -869,12 +890,24 @@ class Database:
             return False
 
     async def has_powerup(self, duel_id: int, qid: int, user_id: int, powerup: str) -> bool:
-        return bool(await self.fetchone("SELECT 1 FROM powerup_usages WHERE duel_id=? AND user_id=? AND powerup=?", (duel_id, user_id, powerup)))
+        return bool(await self.fetchone("SELECT 1 FROM powerup_usages WHERE duel_id=? AND question_id=? AND user_id=? AND powerup=?", (duel_id, qid, user_id, powerup)))
+
+    async def powerup_use_count(self, duel_id: int, user_id: int, powerup: str) -> int:
+        row = await self.fetchone("SELECT COUNT(*) c FROM powerup_usages WHERE duel_id=? AND user_id=? AND powerup=?", (duel_id, user_id, powerup))
+        return int(row["c"] if row else 0)
 
     async def powerup_costs_for_user(self, duel_id: int, user_id: int) -> dict[str, int]:
+        max_uses = await self.get_int("powerup_max_uses_per_duel", 3)
+        remove_uses = await self.powerup_use_count(duel_id, user_id, "remove2")
+        second_uses = await self.powerup_use_count(duel_id, user_id, "second")
+        remove_base = await self.get_int("powerup_remove2_cost", 15)
+        second_base = await self.get_int("powerup_second_chance_cost", 20)
         return {
-            "remove2": await self.get_int("powerup_remove2_cost", 15),
-            "second": await self.get_int("powerup_second_chance_cost", 20),
+            "remove2": -1 if remove_uses >= max_uses else remove_base * (2 ** remove_uses),
+            "second": -1 if second_uses >= max_uses else second_base * (2 ** second_uses),
+            "remove2_uses": remove_uses,
+            "second_uses": second_uses,
+            "max": max_uses,
         }
 
     async def finish_duel(self, duel_id: int) -> dict[str, Any]:

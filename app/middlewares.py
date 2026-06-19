@@ -2,7 +2,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Awaitable, Callable
 from aiogram import BaseMiddleware
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from app.db import Database
 from app.keyboards import MAIN_MENU_TEXTS
 
@@ -15,8 +15,20 @@ class AccessGuardMiddleware(BaseMiddleware):
         try:
             if isinstance(event, Message):
                 if event.chat.type != "private":
-                    if event.text and event.text.startswith("/start"):
-                        await event.answer("برای بازی باید از طریق پیوی (چت خصوصی) با بات وارد شوید.")
+                    cmd = event.text.split()[0].split('@')[0] if event.text else ""
+                    if cmd == "/start":
+                        bot_username = data.get("bot_username", "")
+                        kb = InlineKeyboardMarkup(inline_keyboard=[[
+                            InlineKeyboardButton(text="🎯 شروع بازی", url=f"https://t.me/{bot_username}" if bot_username else "https://t.me/")
+                        ]])
+                        await event.answer(
+                            "🎮 سلام! ربات کوییز دوئلی اینجاست!\n\n"
+                            "برای بازی گروهی:\n👉 دستور /quiz رو بزن یا\n👉 بنویس @" + (bot_username or "BOT") + " بازی گروهی\n\n"
+                            "برای بازی تک‌نفره و دوئل:\n👉 به پیوی ربات بیا 👇",
+                            reply_markup=kb,
+                        )
+                    if cmd == "/quiz":
+                        return await handler(event, data)
                     return None
                 if event.text and event.text.split()[0].split('@')[0] == "/version":
                     return await handler(event, data)
@@ -31,7 +43,7 @@ class AccessGuardMiddleware(BaseMiddleware):
             elif isinstance(event, CallbackQuery):
                 logger.info("Callback received: data=%s from=%s chat_type=%s", event.data, event.from_user.id if event.from_user else None, event.message.chat.type if event.message else None)
                 if event.message and event.message.chat.type != "private":
-                    allowed_prefixes = ("tx:", "qrev:", "qadmin:", "qact:", "report_ignore:")
+                    allowed_prefixes = ("tx:", "qrev:", "qadmin:", "qact:", "report_ignore:", "gquiz:", "group_quiz_join_inline")
                     if not (event.data or "").startswith(allowed_prefixes):
                         return None
                 if db and event.from_user and await db.get_int("maintenance_mode", 0) == 1 and not await db.is_admin(event.from_user.id):

@@ -9,7 +9,7 @@ from aiogram.types import BotCommand
 from app.config import get_settings
 from app.db import Database
 from app.logging_config import setup_logging
-from app.handlers import common, duel, shop, questions, admin
+from app.handlers import common, duel, shop, questions, admin, group_quiz
 from app.middlewares import ActiveDuelMenuGuardMiddleware
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,7 @@ async def main() -> None:
         reports_channel_id=settings.reports_channel_id,
     )
 
+    dp.include_router(group_quiz.router)
     dp.include_router(common.router)
     dp.include_router(admin.router)
     dp.include_router(shop.router)
@@ -54,6 +55,7 @@ async def main() -> None:
         BotCommand(command="guide", description="راهنمای کامندهای ادمین"),
         BotCommand(command="version", description="نمایش نسخه فعال"),
         BotCommand(command="sync_defaults", description="همگام‌سازی تنظیمات پیش‌فرض"),
+        BotCommand(command="migrate_xp_curve", description="اعمال منحنی XP جدید"),
         BotCommand(command="setlevel", description="تنظیم نام و ایموجی لول"),
         BotCommand(command="titles", description="مدیریت لقب‌ها"),
         BotCommand(command="deltitle", description="حذف لقب"),

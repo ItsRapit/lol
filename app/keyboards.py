@@ -64,8 +64,10 @@ def question_keyboard(duel_id: int, qid: int, options: list[str], hidden: set[in
             b.button(text="❌", callback_data="noop")
         else:
             b.button(text=f"{i}. {opt}", callback_data=f"ans:{duel_id}:{qid}:{i}")
-    b.button(text=f"🔪 حذف دو گزینه — {cost_remove2} سکه", callback_data=f"power:remove2:{duel_id}:{qid}")
-    b.button(text=f"🔄 شانس دوباره — {cost_second} سکه", callback_data=f"power:second:{duel_id}:{qid}")
+    remove_text = "🔪 حذف دو گزینه — ❌" if cost_remove2 < 0 else f"🔪 حذف دو گزینه — {cost_remove2}🪙"
+    second_text = "🔄 شانس دوباره — ❌" if cost_second < 0 else f"🔄 شانس دوباره — {cost_second}🪙"
+    b.button(text=remove_text, callback_data="noop" if cost_remove2 < 0 else f"power:remove2:{duel_id}:{qid}")
+    b.button(text=second_text, callback_data="noop" if cost_second < 0 else f"power:second:{duel_id}:{qid}")
     b.button(text="⚠️ گزارش مشکل سوال", callback_data=f"issue_report:{duel_id}:{qid}")
     b.adjust(1, 1, 1, 1, 1, 1, 1)
     return b.as_markup()
