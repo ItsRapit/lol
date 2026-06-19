@@ -1,7 +1,7 @@
 import logging
 from aiogram import Router, F, Bot
 from aiogram.filters import CommandStart, Command, CommandObject
-from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from app.db import Database
 from app.keyboards import main_menu, leaderboard_basis_keyboard, leaderboard_period_keyboard, CANCEL_TEXT, back_home_keyboard
@@ -13,11 +13,38 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+async def check_force_join_private(message: Message, db: Database, bot: Bot) -> bool:
+    if await db.is_admin(message.from_user.id):
+        return True
+    enabled = await db.get_int("force_join_enabled", 0)
+    channel = await db.get_setting("force_join_channel", "")
+    if not enabled or not channel:
+        return True
+    try:
+        member = await bot.get_chat_member(channel, message.from_user.id)
+        if member.status not in {"left", "kicked", "banned"}:
+            return True
+    except Exception:
+        logger.exception("Private force join check failed; allowing")
+        return True
+    buttons = []
+    if channel.startswith("@"):
+        buttons.append([InlineKeyboardButton(text="عضویت توی کانال", url=f"https://t.me/{channel.lstrip('@')}")])
+    buttons.append([InlineKeyboardButton(text="✅ بررسی عضویت", callback_data="check_force_join")])
+    await message.answer(
+        "برای استفاده از ربات اول باید عضو کانال اسپانسر شوید.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    return False
+
+
 @router.message(CommandStart())
 async def start(message: Message, db: Database, state: FSMContext, bot: Bot, command: CommandObject | None = None) -> None:
     await state.clear()
     payload = command.args if command else None
     try:
+        if not await check_force_join_private(message, db, bot):
+            return
         was_new = await db.get_user(message.from_user.id) is None
         await ensure_user(db, message.from_user, payload)
         is_admin = await db.is_admin(message.from_user.id)
@@ -193,3 +220,25 @@ async def referral(message: Message, db: Database, bot_username: str) -> None:
 async def clan_placeholder(message: Message) -> None:
     await message.answer("🏰 قابلیت کلن به‌زودی اضافه می‌شود.", reply_markup=ReplyKeyboardRemove())
     await message.answer("برای برگشت به منوی اصلی بزن:", reply_markup=back_home_keyboard())
+
+
+@router.callback_query(F.data == "check_force_join")
+async def check_force_join_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
+    await call.answer()
+    try:
+        enabled = await db.get_int("force_join_enabled", 0)
+        channel = await db.get_setting("force_join_channel", "")
+        if not enabled or not channel:
+            await call.message.answer("جوین اجباری فعال نیست. /start را بزن.")
+            return
+        try:
+            member = await bot.get_chat_member(channel, call.from_user.id)
+            if member.status not in {"left", "kicked", "banned"}:
+                await call.message.answer("✅ عضویت تایید شد. حالا /start را بزن.")
+            else:
+                await call.message.answer("هنوز عضو کانال نیستی.")
+        except Exception:
+            logger.exception("Force join callback check failed")
+            await call.message.answer("فعلاً امکان بررسی نبود. /start را دوباره بزن.")
+    except Exception:
+        logger.exception("Check force join callback failed")
