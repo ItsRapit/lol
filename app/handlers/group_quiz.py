@@ -35,6 +35,7 @@ class GroupGame:
     questions: list
     scores: dict[int, int] = field(default_factory=dict)
     answered: dict[int, dict[int, int]] = field(default_factory=dict)  # q_index -> user_id -> option
+    resolved: set[int] = field(default_factory=set)
 
 
 lobbies: dict[str, GroupLobby] = {}
@@ -163,9 +164,8 @@ async def inline_join_redirect(call: CallbackQuery, db: Database, bot: Bot) -> N
         return
     lobby = next((l for l in lobbies.values() if l.inline_message_id == inline_id), None)
     if not lobby:
-        lobby_id = f"inline_{abs(hash(inline_id))}"
-        lobby = GroupLobby(lobby_id=lobby_id, starter_id=call.from_user.id, inline_message_id=inline_id)
-        lobbies[lobby_id] = lobby
+        await call.answer("بازی پیدا نشد. Inline Feedback را در BotFather روی 100% بگذار و دوباره تلاش کن.", show_alert=False)
+        return
     await join_lobby(call, db, bot, lobby)
 
 
@@ -177,11 +177,8 @@ async def inline_start_game(call: CallbackQuery, db: Database, bot: Bot) -> None
         return
     lobby = next((l for l in lobbies.values() if l.inline_message_id == inline_id), None)
     if not lobby:
-        lobby_id = f"inline_{abs(hash(inline_id))}"
-        lobby = GroupLobby(lobby_id=lobby_id, starter_id=call.from_user.id, inline_message_id=inline_id)
-        lobby.players[call.from_user.id] = call.from_user.full_name
-        lobby.usernames[call.from_user.id] = call.from_user.username
-        lobbies[lobby_id] = lobby
+        await call.answer("بازی پیدا نشد. Inline Feedback را در BotFather روی 100% بگذار و دوباره تلاش کن.", show_alert=False)
+        return
     if call.from_user.id != lobby.starter_id:
         await call.answer("فقط کسی که بازی رو شروع کرده می‌تونه از این دکمه استفاده کنه", show_alert=False)
         return
@@ -251,12 +248,13 @@ async def send_group_question(bot: Bot, db: Database, game: GroupGame, idx: int)
         return
     q = game.questions[idx]
     game.answered[idx] = {}
-    total = len(game.players)
+    total = len(game.lobby.players)
     text = f"❓ سوال {idx+1} از {len(game.questions)}\n━━━━━━━━━━━━━━\n{q['text']}\n━━━━━━━━━━━━━━\n⏱ ▰▰▰▰▰▰▰▰▰▰ {await db.get_int('group_quiz_timer_seconds', 30)}s\n\n✅ 0/{total} نفر جواب دادن"
     if game.lobby.inline_message_id:
         await bot.edit_message_text(text, inline_message_id=game.lobby.inline_message_id, reply_markup=answer_keyboard(game.lobby.lobby_id, idx, q))
     else:
-        await bot.send_message(game.lobby.chat_id, text, reply_markup=answer_keyboard(game.lobby.lobby_id, idx, q))
+        msg = await bot.send_message(game.lobby.chat_id, text, reply_markup=answer_keyboard(game.lobby.lobby_id, idx, q))
+        game.lobby.message_id = msg.message_id
     asyncio.create_task(group_question_timeout(bot, db, game, idx, await db.get_int('group_quiz_timer_seconds', 30)))
 
 
@@ -284,12 +282,20 @@ async def group_answer(call: CallbackQuery, db: Database, bot: Bot) -> None:
 
 
 async def group_question_timeout(bot: Bot, db: Database, game: GroupGame, idx: int, seconds: int) -> None:
-    await asyncio.sleep(seconds)
-    if idx in game.answered and len(game.answered[idx]) < len(game.lobby.players):
-        await resolve_group_question(bot, db, game, idx)
+    try:
+        await asyncio.sleep(seconds)
+        if idx in game.resolved:
+            return
+        if idx in game.answered and len(game.answered[idx]) < len(game.lobby.players):
+            await resolve_group_question(bot, db, game, idx)
+    except Exception:
+        logger.exception("Group question timeout failed")
 
 
 async def resolve_group_question(bot: Bot, db: Database, game: GroupGame, idx: int) -> None:
+    if idx in game.resolved:
+        return
+    game.resolved.add(idx)
     q = game.questions[idx]
     correct = int(q['correct_option'])
     lines = []
@@ -334,6 +340,9 @@ async def finish_group_game(bot: Bot, db: Database, game: GroupGame) -> None:
         score = game.scores.get(uid, 0)
         xp = 20 if score == max_score and score > 0 else score * 5
         old_user = await db.get_user(uid)
+        if not old_user:
+            await db.upsert_user(uid, game.lobby.usernames.get(uid), name)
+            old_user = await db.get_user(uid)
         old_level = int(old_user['level']) if old_user else 1
         if xp:
             await db.change_xp(uid, xp, "group_quiz")

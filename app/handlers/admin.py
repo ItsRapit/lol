@@ -593,23 +593,50 @@ async def setting_value(message: Message, db: Database, state: FSMContext) -> No
         await message.answer("خطا در ذخیره تنظیم.")
 
 
+async def send_user_profile_admin(message: Message, db: Database, tg_id: int) -> None:
+    u = await db.get_user(tg_id)
+    if not u:
+        await message.answer("کاربر پیدا نشد.")
+        return
+    rank = await db.get_rank_title(u['level'])
+    league = await db.get_user_league(u['cups'])
+    await message.answer(
+        f"👤 کاربر <code>{tg_id}</code>\n"
+        f"Username: @{u['username'] or '-'}\n"
+        f"نام: {u['first_name'] or '-'}\n"
+        f"سکه: {u['coins']}\n"
+        f"ایکس‌پی: {u['xp']}\n"
+        f"لول: {u['level']} — {rank}\n"
+        f"جام: {u['cups']} | لیگ: {league['name'] if league else '-'}\n"
+        f"Blocked: {bool(u['is_blocked'])}\n"
+        f"Wins/Losses/Draws: {u['wins']}/{u['losses']}/{u['draws']}",
+        reply_markup=user_admin_keyboard(tg_id),
+    )
+
+
+@router.message(Command("user"))
+async def user_command(message: Message, db: Database) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        parts = (message.text or "").split()
+        if len(parts) != 2 or not parts[1].isdigit():
+            await message.answer("فرمت درست: /user USER_ID")
+            return
+        await send_user_profile_admin(message, db, int(parts[1]))
+    except Exception:
+        logger.exception("User command failed")
+        await message.answer("خطا در جستجوی کاربر.")
+
+
 @router.message(AdminFlow.waiting_user_id, F.text)
 async def user_lookup(message: Message, db: Database, state: FSMContext) -> None:
     try:
         if not await require_admin_message(message, db):
             return
         tg_id = int(message.text.strip())
-        u = await db.get_user(tg_id)
         await state.clear()
-        if not u:
-            await message.answer("کاربر پیدا نشد.")
-            return
-        rank = await db.get_rank_title(u['level'])
-        league = await db.get_user_league(u['cups'])
-        await message.answer(
-            f"👤 کاربر <code>{tg_id}</code>\nUsername: @{u['username'] or '-'}\nCoins: {u['coins']}\nXP: {u['xp']}\nLevel: {u['level']} — {rank}\nCups: {u['cups']} | League: {league['name'] if league else '-'}\nBlocked: {bool(u['is_blocked'])}\nWins/Losses/Draws: {u['wins']}/{u['losses']}/{u['draws']}",
-            reply_markup=user_admin_keyboard(tg_id),
-        )
+        await send_user_profile_admin(message, db, tg_id)
     except ValueError:
         await message.answer("آیدی باید عددی باشد.")
     except Exception:

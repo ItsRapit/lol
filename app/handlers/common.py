@@ -109,12 +109,16 @@ async def profile(message: Message, db: Database) -> None:
             genre_analysis = f"\n\n💪 نقاط قوت:\n{strengths}"
             if weaknesses:
                 genre_analysis += f"\n\n⚠️ نقاط ضعف:\n{weaknesses}"
+        total_duels = int(u['wins']) + int(u['losses']) + int(u['draws'])
+        wrong = max(0, int(u['total_answers']) - int(u['correct_answers']))
         await message.answer(
             f"👤 <b>{u['first_name'] or 'کاربر'}</b> {username}\n"
             f"{title_text} | لول {u['level']}\n"
             f"ایکس‌پی {current_xp}/{required_xp} {xp_bar_blocks}\n"
             f"🏆 {league_name} — {u['cups']} جام\n"
-            f"🪙 سکه: {u['coins']}"
+            f"🪙 سکه: {u['coins']}\n\n"
+            f"⚔️ دوئل‌ها: {total_duels} | برد {u['wins']} / مساوی {u['draws']} / شکست {u['losses']}\n"
+            f"✅ پاسخ صحیح: {u['correct_answers']} | ❌ پاسخ غلط: {wrong}"
             f"{genre_analysis}",
             reply_markup=back_home_keyboard(),
         )

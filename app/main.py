@@ -53,6 +53,7 @@ async def main() -> None:
         BotCommand(command="start", description="شروع"),
         BotCommand(command="admin", description="پنل ادمین"),
         BotCommand(command="guide", description="راهنمای کامندهای ادمین"),
+        BotCommand(command="user", description="جستجوی کاربر با آیدی"),
         BotCommand(command="version", description="نمایش نسخه فعال"),
         BotCommand(command="sync_defaults", description="همگام‌سازی تنظیمات پیش‌فرض"),
         BotCommand(command="migrate_xp_curve", description="اعمال منحنی XP جدید"),
