@@ -130,6 +130,17 @@ async def check_channel_membership(bot: Bot, user_id: int, channel_id: str) -> b
         return True
 
 
+async def ensure_user_started_callback(call: CallbackQuery, db: Database) -> bool:
+    user_exists = await db.fetchone("SELECT id FROM users WHERE telegram_id = ?", (call.from_user.id,))
+    if not user_exists:
+        await call.answer(
+            text="چالشینو\n\nابتدا ربات را استارت کنید 👇\n@ChalleshinoBot",
+            show_alert=True,
+        )
+        return False
+    return True
+
+
 async def require_force_join(call: CallbackQuery, db: Database, bot: Bot) -> bool:
     enabled = await db.get_int("force_join_enabled", 0)
     channel = await db.get_setting("force_join_channel", "")
@@ -283,6 +294,8 @@ async def chosen_result_handler(chosen: ChosenInlineResult, bot: Bot, db: Databa
 
 @router.callback_query(F.data.in_({"group_quiz_join_inline", "group_quiz_join"}))
 async def inline_join_redirect(call: CallbackQuery, db: Database, bot: Bot) -> None:
+    if not await ensure_user_started_callback(call, db):
+        return
     inline_id = call.inline_message_id
     if not inline_id:
         return
@@ -317,6 +330,8 @@ async def inline_start_game(call: CallbackQuery, db: Database, bot: Bot) -> None
 
 @router.callback_query(F.data.startswith("gquiz:join:"))
 async def group_join(call: CallbackQuery, db: Database, bot: Bot) -> None:
+    if not await ensure_user_started_callback(call, db):
+        return
     lobby_id = call.data.split(":", 2)[2]
     lobby = lobbies.get(lobby_id)
     if lobby:
@@ -516,6 +531,8 @@ async def finish_group_game(bot: Bot, db: Database, game: GroupGame) -> None:
 @router.callback_query(F.data == "group_duel_accept")
 async def group_duel_accept(call: CallbackQuery, bot: Bot, db: Database) -> None:
     try:
+        if not await ensure_user_started_callback(call, db):
+            return
         if not await require_registered_and_join(call, db, bot):
             return
         await call.answer()
