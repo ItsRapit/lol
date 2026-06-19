@@ -299,6 +299,16 @@ class Database:
                 description TEXT,
                 created_at TEXT NOT NULL
             )""",
+            """CREATE TABLE IF NOT EXISTS group_game_logs(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_type TEXT NOT NULL,
+                chat_id INTEGER,
+                inline_message_id TEXT,
+                players_count INTEGER NOT NULL DEFAULT 0,
+                questions_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                finished_at TEXT NOT NULL
+            )""", 
         ]
         async with self._write_lock:
             for sql in statements:
@@ -1273,22 +1283,40 @@ class Database:
         now_t = tehran_now()
         today_start = now_t.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC).isoformat(timespec="seconds")
         week_start = (now_t - timedelta(days=7)).astimezone(UTC).isoformat(timespec="seconds")
-        month_start = (now_t - timedelta(days=30)).astimezone(UTC).isoformat(timespec="seconds")
-        year_start = (now_t - timedelta(days=365)).astimezone(UTC).isoformat(timespec="seconds")
-        for key, sql, params in [
+        month_start = (now_t - timedelta(days=30)).isoformat(timespec="seconds")
+        year_start = (now_t - timedelta(days=365)).isoformat(timespec="seconds")
+        generated_reasons = (
+            'initial_signup','duel_correct','random_duel_win_bonus','question_approved_reward',
+            'daily_aid','referral','referral_new_user','group_duel_correct','group_duel_win'
+        )
+        burned_reasons = (
+            'random_duel_entry','friendly_duel_create','powerup_remove2','powerup_second',
+            'inactive_forfeit_penalty','powerup_5050','powerup_hint'
+        )
+        gen_ph = ','.join('?' for _ in generated_reasons)
+        burn_ph = ','.join('?' for _ in burned_reasons)
+        queries = [
             ("users", "SELECT COUNT(*) c FROM users", ()),
             ("new_users_today", "SELECT COUNT(*) c FROM users WHERE created_at>=?", (today_start,)),
             ("duels", "SELECT COUNT(*) c FROM duels", ()),
             ("finished_duels", "SELECT COUNT(*) c FROM duels WHERE status='finished'", ()),
-            ("games_today", "SELECT COUNT(*) c FROM duels WHERE status='finished' AND finished_at>=?", (today_start,)),
+            ("duels_today", "SELECT COUNT(*) c FROM duels WHERE status='finished' AND finished_at>=?", (today_start,)),
+            ("group_quiz_total", "SELECT COUNT(*) c FROM group_game_logs WHERE game_type='quiz'", ()),
+            ("group_duel_total", "SELECT COUNT(*) c FROM group_game_logs WHERE game_type='duel'", ()),
+            ("group_games_today", "SELECT COUNT(*) c FROM group_game_logs WHERE finished_at>=?", (today_start,)),
             ("approved_transactions", "SELECT COUNT(*) c FROM shop_transactions WHERE status='approved'", ()),
             ("pending_questions", "SELECT COUNT(*) c FROM questions WHERE status='pending'", ()),
+            ("active_questions", "SELECT COUNT(*) c FROM questions WHERE status='active'", ()),
+            ("disabled_questions", "SELECT COUNT(*) c FROM questions WHERE status='disabled'", ()),
             ("total_questions", "SELECT COUNT(*) c FROM questions", ()),
             ("user_questions", "SELECT COUNT(*) c FROM questions WHERE submitted_by IS NOT NULL AND (added_by IS NULL OR added_by<>submitted_by)", ()),
             ("admin_questions", "SELECT COUNT(*) c FROM questions WHERE added_by IS NOT NULL", ()),
-            ("coins_generated", "SELECT COALESCE(SUM(amount),0) c FROM coin_events WHERE amount>0", ()),
-            ("coins_burned", "SELECT COALESCE(SUM(-amount),0) c FROM coin_events WHERE amount<0", ()),
-        ]:
+            ("coins_generated", f"SELECT COALESCE(SUM(amount),0) c FROM coin_events WHERE amount>0 AND reason IN ({gen_ph})", generated_reasons),
+            ("coins_burned", f"SELECT COALESCE(SUM(-amount),0) c FROM coin_events WHERE amount<0 AND reason IN ({burn_ph})", burned_reasons),
+            ("coins_total_positive", "SELECT COALESCE(SUM(amount),0) c FROM coin_events WHERE amount>0", ()),
+            ("coins_total_negative", "SELECT COALESCE(SUM(-amount),0) c FROM coin_events WHERE amount<0", ()),
+        ]
+        for key, sql, params in queries:
             row = await self.fetchone(sql, params)
             out[key] = int(row["c"] if row else 0)
         tx_rows = await self.fetchall("SELECT final_price_label, original_price_label, created_at, reviewed_at FROM shop_transactions WHERE status='approved'")
@@ -1301,6 +1329,12 @@ class Database:
             out[label] = total
         return out
 
+    async def log_group_game(self, game_type: str, chat_id: int | None, inline_message_id: str | None, players_count: int, questions_count: int) -> None:
+        await self.execute_write(
+            "INSERT INTO group_game_logs(game_type,chat_id,inline_message_id,players_count,questions_count,created_at,finished_at) VALUES(?,?,?,?,?,?,?)",
+            (game_type, chat_id, inline_message_id, players_count, questions_count, now_iso(), now_iso()),
+        )
+
     async def log_admin(self, admin_id: int, action: str, target: str | None = None, details: str | None = None) -> None:
         await self.execute_write("INSERT INTO admin_actions_log(admin_id,action,target,details,created_at) VALUES(?,?,?,?,?)", (admin_id, action, target, details, now_iso()))
 
@@ -1310,7 +1344,8 @@ class Database:
             'questions': ['questions'],
             'users': ['users', 'referrals', 'xp_events', 'coin_events', 'cup_events', 'user_genre_stats'],
             'settings': ['settings', 'ranks', 'genres', 'leagues', 'shop_packages', 'discount_codes'],
-            'all': ['users','admins','settings','ranks','genres','leagues','questions','duels','duel_questions','duel_answers','powerup_usages','xp_events','coin_events','cup_events','shop_packages','shop_transactions','referrals','question_reports','admin_actions_log','discount_codes','user_genre_stats'],
+            'groups': ['group_game_logs'],
+            'all': ['users','admins','settings','ranks','genres','leagues','questions','duels','duel_questions','duel_answers','powerup_usages','xp_events','coin_events','cup_events','shop_packages','shop_transactions','referrals','question_reports','admin_actions_log','discount_codes','user_genre_stats','group_game_logs'], 
         }
         tables = groups.get(section)
         if not tables:

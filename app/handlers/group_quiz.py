@@ -196,9 +196,16 @@ async def edit_lobby(bot: Bot, lobby: GroupLobby, text: str, reply_markup=None) 
 
 
 @router.message(Command("quiz"))
-async def group_quiz_start(message: Message, db: Database) -> None:
+async def group_quiz_start(message: Message, db: Database, bot: Bot) -> None:
     if message.chat.type == "private":
         await message.answer("این دستور برای گروه‌هاست.")
+        return
+    if not await db.get_user(message.from_user.id):
+        me = await bot.get_me()
+        await message.answer(
+            "برای شروع بازی گروهی اول باید ربات را در پیوی استارت کنید 👇",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎯 شروع ربات", url=f"https://t.me/{me.username}")]])
+        )
         return
     key = f"chat:{message.chat.id}"
     if any(l.chat_id == message.chat.id and not l.started for l in lobbies.values()):
@@ -498,6 +505,7 @@ async def finish_group_game(bot: Bot, db: Database, game: GroupGame) -> None:
         lines.append(f"{pos}. {trim_name(name)} — {score}/{len(game.questions)} ✅ (+{xp} XP)")
     text = "🏆 نتیجه‌ی بازی\n━━━━━━━━━━━━━━\n" + "\n".join(lines) + "\n━━━━━━━━━━━━━━"
     await edit_lobby(bot, game.lobby, text, None)
+    await db.log_group_game('quiz', game.lobby.chat_id, game.lobby.inline_message_id, len(game.lobby.players), len(game.questions))
     if game.lobby.chat_id:
         for _, mention, old_level, new_level, title_text in levelups:
             await notify_levelup_in_group(bot, game.lobby.chat_id, mention, old_level, new_level, title_text)
@@ -510,6 +518,8 @@ async def finish_group_game(bot: Bot, db: Database, game: GroupGame) -> None:
 async def group_duel_accept(call: CallbackQuery, bot: Bot, db: Database) -> None:
     await call.answer()
     try:
+        if not await require_registered_and_join(call, db, bot):
+            return
         inline_id = call.inline_message_id
         if not inline_id:
             await call.answer("این دکمه فقط برای inline duel است", show_alert=False)
@@ -536,9 +546,10 @@ async def group_duel_accept(call: CallbackQuery, bot: Bot, db: Database) -> None
             reply_markup=None,
         )
         group_duel_genres[lobby.lobby_id] = {}
-        genres = await db.all_genres()
+        all_genres = await db.all_genres()
         for uid in lobby.players:
             try:
+                genres = random.sample(all_genres, min(8, len(all_genres))) if all_genres else []
                 await bot.send_message(uid, "ژانر دوئل را انتخاب کن:", reply_markup=group_duel_genre_keyboard(lobby.lobby_id, genres))
             except Exception:
                 logger.exception("Could not send group duel genre PM to %s", uid)
@@ -696,21 +707,19 @@ async def finish_group_duel(bot: Bot, db: Database, game: GroupDuelGame) -> None
         winner_id, winner_name = players[1]
     else:
         winner_id, winner_name = None, "مساوی"
-    coin_per = await db.get_int("reward_coin_per_correct", 10)
     xp_per = await db.get_int("reward_xp_per_correct", 15)
-    win_bonus = await db.get_int("random_duel_win_coin_bonus", 20)
     for uid, name in players:
         score = game.scores.get(uid, 0)
-        await db.change_coins(uid, score * coin_per, "group_duel_correct")
-        await db.change_xp(uid, score * xp_per, "group_duel_correct")
-        if winner_id == uid:
-            await db.change_coins(uid, win_bonus, "group_duel_win")
+        xp_amount = score * xp_per
+        if xp_amount:
+            await db.change_xp(uid, xp_amount, "group_duel_correct")
         try:
-            await bot.send_message(uid, f"🎁 جوایز دوئل گروهی\nدرست: {score}\nسکه: +{score * coin_per + (win_bonus if winner_id == uid else 0)}\nایکس‌پی: +{score * xp_per}")
+            await bot.send_message(uid, f"🎁 جوایز دوئل\nدرست: {score}\nایکس‌پی: +{xp_amount}\nسکه و جام در دوئل گروهی داده نمی‌شود.")
         except Exception:
             logger.exception("Could not send group duel reward PM")
     text = f"⚔️ نتیجه‌ی دوئل\n━━━━━━━━━━━━━━\n🏆 {trim_name(winner_name)} برد\n{s1} درست vs {s2} درست\n━━━━━━━━━━━━━━\n🎁 جوایز در پیوی ارسال شد"
     await edit_lobby(bot, game.lobby, text, None)
+    await db.log_group_game('duel', game.lobby.chat_id, game.lobby.inline_message_id, len(game.lobby.players), len(game.questions))
     group_duels.pop(game.lobby.lobby_id, None)
     lobbies.pop(game.lobby.lobby_id, None)
     group_duel_genres.pop(game.lobby.lobby_id, None)
