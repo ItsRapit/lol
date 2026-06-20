@@ -490,40 +490,60 @@ async def group_question_timeout(bot: Bot, db: Database, game: GroupGame, idx: i
         remaining = seconds
         while remaining > 0:
             await asyncio.sleep(min(step, remaining))
-            if idx in game.resolved or game.current_idx != idx:
+            if idx in game.resolved or game.current_idx != idx or game.game_ended:
                 return
             remaining = max(0, remaining - step)
             game.remaining[idx] = remaining
+            # وقتی تایمر به صفر رسید، اول سوال را ببند؛ دیگر پیام 0s را به عنوان حالت زنده نگه ندار.
+            if remaining <= 0:
+                break
             await edit_lobby(bot, game.lobby, group_question_text(game, idx, remaining, seconds), answer_keyboard(game.lobby.lobby_id, idx, game.questions[idx]))
             if len(game.answered.get(idx, {})) >= len(game.lobby.players):
                 return
-        if idx not in game.resolved:
-            await resolve_group_question(bot, db, game, idx)
+        if idx not in game.resolved and game.current_idx == idx and not game.game_ended:
+            await asyncio.shield(resolve_group_question(bot, db, game, idx))
     except asyncio.CancelledError:
         return
     except Exception:
         logger.exception("Group question timeout failed")
+        try:
+            if idx not in game.resolved and game.current_idx == idx and not game.game_ended:
+                await resolve_group_question(bot, db, game, idx)
+        except Exception:
+            logger.exception("Fallback resolve after timer failure failed")
 
 
 async def resolve_group_question(bot: Bot, db: Database, game: GroupGame, idx: int) -> None:
     async with game.question_lock:
-        if game.question_ended or idx in game.resolved or game.current_idx != idx:
+        if game.question_ended or idx in game.resolved or game.current_idx != idx or game.game_ended:
             return
         game.question_ended = True
         game.resolved.add(idx)
         task = game.timer_tasks.get(idx)
-        if task and not task.done():
+        current = asyncio.current_task()
+        if task and task is not current and not task.done():
             task.cancel()
-        q = game.questions[idx]
-        correct = int(q['correct_option'])
-        for uid, name in game.lobby.players.items():
-            ok = game.answered.get(idx, {}).get(uid) == correct
-            if ok:
-                game.scores[uid] = game.scores.get(uid, 0) + 1
-        text = group_question_text(game, idx, game.remaining.get(idx, 0), await db.get_int('group_quiz_timer_seconds', 30), resolved=True)
-        await edit_lobby(bot, game.lobby, text, None)
-        await asyncio.sleep(2)
-        await send_group_question(bot, db, game, idx + 1)
+        try:
+            q = game.questions[idx]
+            correct = int(q['correct_option'])
+            for uid, name in game.lobby.players.items():
+                ok = game.answered.get(idx, {}).get(uid) == correct
+                if ok:
+                    game.scores[uid] = game.scores.get(uid, 0) + 1
+            game.remaining[idx] = 0
+            text = group_question_text(game, idx, 0, await db.get_int('group_quiz_timer_seconds', 30), resolved=True)
+            await edit_lobby(bot, game.lobby, text, None)
+            await asyncio.sleep(2)
+            if idx + 1 < len(game.questions):
+                await send_group_question(bot, db, game, idx + 1)
+            else:
+                await finish_group_game(bot, db, game)
+        except Exception:
+            logger.exception("Resolve group question failed")
+            try:
+                await edit_lobby(bot, game.lobby, "❌ خطا در پایان سوال. بازی متوقف شد.", None)
+            except Exception:
+                logger.exception("Could not show group question error")
 
 
 async def notify_levelup_in_group(bot: Bot, chat_id: int, username: str, old_level: int, new_level: int, new_title: str) -> None:
