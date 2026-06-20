@@ -114,7 +114,7 @@ async def q_review(call: CallbackQuery, db: Database, bot: Bot) -> None:
         await db.log_admin(call.from_user.id, f"question_{action}", qid_s)
         if q['submitted_by']:
             if approve:
-                reward = await db.get_int("question_approval_reward_coins", 20)
+                reward = await db.get_int("question_approval_reward_coins", 10)
                 if reward > 0:
                     await db.change_coins(q['submitted_by'], reward, "question_approved_reward")
                 updated = await db.get_user(q['submitted_by'])

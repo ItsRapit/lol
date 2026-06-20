@@ -39,6 +39,9 @@ class GroupGame:
     remaining: dict[int, int] = field(default_factory=dict)
     timer_tasks: dict[int, asyncio.Task] = field(default_factory=dict)
     current_idx: int = 0
+    question_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    question_ended: bool = False
+    game_ended: bool = False
 
 
 @dataclass
@@ -82,8 +85,8 @@ def player_progress_lines(game: GroupGame, current_idx: int) -> str:
                 marks.append("⬜")
             else:
                 marks.append("✅" if ans == int(game.questions[i]['correct_option']) else "❌")
-        lines.append(f"\u200f{trim_name(name)} {''.join(marks)}")
-    return "\n".join(lines)
+        lines.append(f"\u200f{trim_name(name)}\n\u200e{''.join(marks)}")
+    return "\n\n".join(lines)
 
 
 def group_question_text(game: GroupGame, idx: int, remaining: int, total_seconds: int, resolved: bool = False) -> str:
@@ -240,7 +243,7 @@ async def inline_handler(query: InlineQuery, db: Database) -> None:
         result = InlineQueryResultArticle(
         id="group_quiz",
         title="🎮 بازی گروهی",
-        description="همه با هم یه سوال می‌بینن، اولین نفر که درست بزنه امتیاز می‌گیره",
+        description="همه با هم یه سوال می‌بینن، هر جواب درست = یه امتیاز، هرکی آخر بازی امتیاز بیشتری داشت برنده‌ست",
         input_message_content=InputTextMessageContent(
             message_text=f"🎮 بازی گروهی چالشینو\n\n👤 سازنده: {name}\n👥 شرکت‌کنندگان: 1/{max_players}\n\n✅ {name}"
         ),
@@ -393,6 +396,7 @@ async def send_group_question(bot: Bot, db: Database, game: GroupGame, idx: int)
         return
     q = game.questions[idx]
     game.current_idx = idx
+    game.question_ended = False
     game.answered[idx] = {}
     total_seconds = await db.get_int('group_quiz_timer_seconds', 30)
     game.remaining[idx] = total_seconds
@@ -456,22 +460,24 @@ async def group_question_timeout(bot: Bot, db: Database, game: GroupGame, idx: i
 
 
 async def resolve_group_question(bot: Bot, db: Database, game: GroupGame, idx: int) -> None:
-    if idx in game.resolved or game.current_idx != idx:
-        return
-    game.resolved.add(idx)
-    q = game.questions[idx]
-    correct = int(q['correct_option'])
-    lines = []
-    for uid, name in game.lobby.players.items():
-        ok = game.answered.get(idx, {}).get(uid) == correct
-        if ok:
-            game.scores[uid] = game.scores.get(uid, 0) + 1
-        mark = "✅" if ok else "❌"
-        lines.append(f"{mark} \u200f{trim_name(name)}\n▰⬜⬜⬜⬜")
-    text = group_question_text(game, idx, game.remaining.get(idx, 0), await db.get_int('group_quiz_timer_seconds', 30), resolved=True)
-    await edit_lobby(bot, game.lobby, text, None)
-    await asyncio.sleep(2)
-    await send_group_question(bot, db, game, idx + 1)
+    async with game.question_lock:
+        if game.question_ended or idx in game.resolved or game.current_idx != idx:
+            return
+        game.question_ended = True
+        game.resolved.add(idx)
+        task = game.timer_tasks.get(idx)
+        if task and not task.done():
+            task.cancel()
+        q = game.questions[idx]
+        correct = int(q['correct_option'])
+        for uid, name in game.lobby.players.items():
+            ok = game.answered.get(idx, {}).get(uid) == correct
+            if ok:
+                game.scores[uid] = game.scores.get(uid, 0) + 1
+        text = group_question_text(game, idx, game.remaining.get(idx, 0), await db.get_int('group_quiz_timer_seconds', 30), resolved=True)
+        await edit_lobby(bot, game.lobby, text, None)
+        await asyncio.sleep(2)
+        await send_group_question(bot, db, game, idx + 1)
 
 
 async def notify_levelup_in_group(bot: Bot, chat_id: int, username: str, old_level: int, new_level: int, new_title: str) -> None:
@@ -494,6 +500,9 @@ async def notify_levelup_in_group(bot: Bot, chat_id: int, username: str, old_lev
 
 
 async def finish_group_game(bot: Bot, db: Database, game: GroupGame) -> None:
+    if game.game_ended:
+        return
+    game.game_ended = True
     max_score = max(game.scores.values() or [0])
     sorted_players = sorted(game.lobby.players.items(), key=lambda kv: game.scores.get(kv[0], 0), reverse=True)
     lines = []

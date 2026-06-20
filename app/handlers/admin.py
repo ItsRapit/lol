@@ -11,10 +11,10 @@ from app.keyboards import (
     admin_shop_types_keyboard, admin_shop_packages_keyboard, admin_shop_edit_keyboard,
     admin_leagues_keyboard, admin_league_edit_keyboard, admin_discounts_keyboard,
     discount_kind_keyboard, question_manage_keyboard, question_genres_keyboard, pending_questions_keyboard,
-    invalid_questions_confirm_keyboard, review_question_keyboard, question_admin_actions_keyboard,
+    invalid_questions_confirm_keyboard, review_question_keyboard, question_admin_actions_keyboard, question_search_results_keyboard, genre_edit_keyboard,
     titles_menu_keyboard, animation_preview_keyboard, admin_submenu_keyboard,
 )
-from app.states import AdminFlow, BulkQuestionImport, ShopPackageFlow, LeagueFlow, DiscountFlow, QuestionCleanupFlow, TitleFlow
+from app.states import AdminFlow, BulkQuestionImport, ShopPackageFlow, LeagueFlow, DiscountFlow, QuestionCleanupFlow, QuestionEditFlow, TitleFlow
 from app.bulk_questions import parse_bulk_questions, format_bulk_report, bulk_help_text, extract_json_text, is_json_balanced, looks_like_json, looks_like_bulk_text
 from app.time_utils import tehran_now, jalali_datetime
 from app.notifications import run_edit_animation, levelup_steps, rankup_steps, title_steps, demotion_steps
@@ -141,6 +141,34 @@ async def setlevel_command(message: Message, db: Database) -> None:
         await message.answer("خطا در تنظیم لول. مثال: /setlevel 5 🗡 شکارچی | 1200")
 
 
+async def send_question_search_results(message: Message, db: Database, query: str, page: int = 0) -> None:
+    results = await db.search_questions(query, page)
+    if not results:
+        await message.answer("❌ سوالی با این مشخصات پیدا نشد")
+        return
+    lines = [f"🔍 نتایج جستجو ({len(results)} مورد):"]
+    nums = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+    for i, q in enumerate(results):
+        status = "✅ تأییدشده" if q['status'] == 'active' else q['status']
+        lines.append(f"\n{nums[i]} ID: {q['id']}\n❓ {q['text']}\n🏷 ژانر: {q['genre']} | {status}")
+    await message.answer("\n".join(lines), reply_markup=question_search_results_keyboard(results, page, query))
+
+
+@router.message(Command("searchquestion"))
+async def search_question_command(message: Message, db: Database) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        query = (message.text or "").replace("/searchquestion", "", 1).strip()
+        if not query:
+            await message.answer("فرمت درست: /searchquestion متن یا ID")
+            return
+        await send_question_search_results(message, db, query, 0)
+    except Exception:
+        logger.exception("Search question failed")
+        await message.answer("خطا در جستجوی سوال.")
+
+
 @router.message(Command("question"))
 async def question_lookup_command(message: Message, db: Database) -> None:
     try:
@@ -244,7 +272,7 @@ async def sync_defaults_command(message: Message, db: Database) -> None:
         await db.seed_defaults()
         if force:
             # Force only the latest gameplay defaults that users specifically asked for.
-            await db.set_setting("question_approval_reward_coins", "20")
+            await db.set_setting("question_approval_reward_coins", "10")
             await db.set_setting("random_duel_win_coin_bonus", "20")
             await db.set_setting("powerup_remove2_cost", "15")
             await db.set_setting("powerup_second_chance_cost", "20")
@@ -1069,6 +1097,122 @@ async def question_admin_mode(call: CallbackQuery, db: Database) -> None:
         await call.answer("خطا", show_alert=True)
 
 
+@router.callback_query(F.data.startswith("qsearch:"))
+async def qsearch_page_callback(call: CallbackQuery, db: Database) -> None:
+    await call.answer()
+    try:
+        _, page_s, query = call.data.split(":", 2)
+        results = await db.search_questions(query, int(page_s))
+        if not results:
+            await call.message.answer("❌ سوالی با این مشخصات پیدا نشد")
+            return
+        lines = [f"🔍 نتایج جستجو ({len(results)} مورد):"]
+        for i, q in enumerate(results, 1):
+            status = "✅ تأییدشده" if q['status'] == 'active' else q['status']
+            lines.append(f"\n{i}. ID: {q['id']}\n❓ {q['text']}\n🏷 ژانر: {q['genre']} | {status}")
+        await call.message.edit_text("\n".join(lines), reply_markup=question_search_results_keyboard(results, int(page_s), query))
+    except Exception:
+        logger.exception("Qsearch page failed")
+        await call.message.answer("خطا در صفحه‌بندی جستجو.")
+
+
+@router.callback_query(F.data.startswith("qedit:"))
+async def qedit_callback(call: CallbackQuery, db: Database, state: FSMContext) -> None:
+    await call.answer()
+    try:
+        if not await require_admin_call(call, db):
+            return
+        _, action, qid_s = call.data.split(":")
+        qid = int(qid_s)
+        await state.update_data(edit_qid=qid)
+        if action == "text":
+            await state.set_state(QuestionEditFlow.text)
+            await call.message.answer("متن جدید صورت سوال را بفرست:", reply_markup=cancel_keyboard())
+        elif action == "options":
+            await state.set_state(QuestionEditFlow.option1)
+            await call.message.answer("گزینه الف را بفرست:", reply_markup=cancel_keyboard())
+        elif action == "genre":
+            await call.message.answer("ژانر جدید را انتخاب کن:", reply_markup=genre_edit_keyboard(qid, await db.all_genres()))
+    except Exception:
+        logger.exception("Qedit callback failed")
+        await call.message.answer("خطا در شروع ویرایش.")
+
+
+@router.message(QuestionEditFlow.text, F.text)
+async def qedit_text_save(message: Message, db: Database, state: FSMContext) -> None:
+    try:
+        if not await require_admin_message(message, db): return
+        data = await state.get_data()
+        await db.update_question_text(int(data['edit_qid']), message.text.strip())
+        await state.clear()
+        await message.answer("✅ متن سوال ویرایش شد.")
+    except Exception:
+        logger.exception("Qedit text failed")
+        await message.answer("خطا در ویرایش متن.")
+
+
+@router.message(QuestionEditFlow.option1, F.text)
+async def qedit_o1(message: Message, state: FSMContext, db: Database) -> None:
+    if not await require_admin_message(message, db): return
+    await state.update_data(o1=message.text.strip())
+    await state.set_state(QuestionEditFlow.option2)
+    await message.answer("گزینه ب را بفرست:")
+
+
+@router.message(QuestionEditFlow.option2, F.text)
+async def qedit_o2(message: Message, state: FSMContext, db: Database) -> None:
+    if not await require_admin_message(message, db): return
+    await state.update_data(o2=message.text.strip())
+    await state.set_state(QuestionEditFlow.option3)
+    await message.answer("گزینه ج را بفرست:")
+
+
+@router.message(QuestionEditFlow.option3, F.text)
+async def qedit_o3(message: Message, state: FSMContext, db: Database) -> None:
+    if not await require_admin_message(message, db): return
+    await state.update_data(o3=message.text.strip())
+    await state.set_state(QuestionEditFlow.option4)
+    await message.answer("گزینه د را بفرست:")
+
+
+@router.message(QuestionEditFlow.option4, F.text)
+async def qedit_o4(message: Message, state: FSMContext, db: Database) -> None:
+    if not await require_admin_message(message, db): return
+    await state.update_data(o4=message.text.strip())
+    await state.set_state(QuestionEditFlow.correct)
+    await message.answer("کدام گزینه درست است؟ (الف/ب/ج/د)")
+
+
+@router.message(QuestionEditFlow.correct, F.text)
+async def qedit_correct(message: Message, state: FSMContext, db: Database) -> None:
+    try:
+        if not await require_admin_message(message, db): return
+        mapping = {"الف": 1, "ب": 2, "ج": 3, "د": 4, "a": 1, "b": 2, "c": 3, "d": 4, "1": 1, "2": 2, "3": 3, "4": 4}
+        key = message.text.strip().lower()
+        if key not in mapping:
+            await message.answer("فقط الف/ب/ج/د یا 1 تا 4 قابل قبول است.")
+            return
+        data = await state.get_data()
+        await db.update_question_options(int(data['edit_qid']), [data['o1'], data['o2'], data['o3'], data['o4']], mapping[key])
+        await state.clear()
+        await message.answer("✅ گزینه‌ها و جواب درست ویرایش شدند.")
+    except Exception:
+        logger.exception("Qedit options failed")
+        await message.answer("خطا در ویرایش گزینه‌ها.")
+
+
+@router.callback_query(F.data.startswith("qedit_genre:"))
+async def qedit_genre_save(call: CallbackQuery, db: Database) -> None:
+    await call.answer()
+    try:
+        _, qid_s, genre = call.data.split(":", 2)
+        await db.update_question_genre(int(qid_s), genre)
+        await call.message.answer(f"✅ ژانر سوال به {genre} تغییر کرد.")
+    except Exception:
+        logger.exception("Qedit genre failed")
+        await call.message.answer("خطا در ویرایش ژانر.")
+
+
 @router.callback_query(F.data.startswith("qadmin:"))
 async def question_admin_callback(call: CallbackQuery, db: Database) -> None:
     try:
@@ -1083,11 +1227,11 @@ async def question_admin_callback(call: CallbackQuery, db: Database) -> None:
             title = "در صف بررسی" if mode == "pending" else "تاییدشده"
             await call.message.answer(f"سوالات {title} ژانر {genre}:", reply_markup=pending_questions_keyboard(qs, genre, mode))
         elif action == "view":
-            q = await db.get_question(int(parts[2]))
-            if not q:
+            qid = int(parts[2])
+            text = await format_question_admin_text(db, qid)
+            if not text:
                 await call.answer("سوال پیدا نشد.", show_alert=True); return
-            text = f"سوال #{q['id']}\nژانر: {q['genre']}\nتاریخ ثبت: {jalali_datetime(q['created_at'])}\n\n{q['text']}\n1) {q['option1']}\n2) {q['option2']}\n3) {q['option3']}\n4) {q['option4']}\nCorrect: {q['correct_option']}"
-            await call.message.answer(text, reply_markup=review_question_keyboard(q['id']))
+            await call.message.answer(text, reply_markup=question_admin_actions_keyboard(qid))
         await call.answer()
     except Exception:
         logger.exception("Question admin callback failed")

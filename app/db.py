@@ -372,7 +372,8 @@ class Database:
             "powerup_remove2_cost": ("15", "Cost of remove two options powerup"),
             "powerup_second_chance_cost": ("20", "Cost of second chance powerup"),
             "powerup_max_uses_per_duel": ("3", "Maximum uses per powerup per user per duel"),
-            "question_approval_reward_coins": ("20", "Coins rewarded to user when submitted question is approved"),
+            "question_approval_reward_coins": ("10", "Coins rewarded to user when submitted question is approved"),
+            "duel_draw_coin_reward": ("5", "Coin reward for each player on draw"),
             "visual_timer_enabled": ("1", "Enable visual progress timer edits"),
             "visual_timer_interval_seconds": ("6", "Visual timer edit interval"),
             "fast_bonus_xp_0_5": ("5", "Fast answer bonus XP for 0-5 seconds"),
@@ -949,7 +950,8 @@ class Database:
         xp_per = await self.get_int("reward_xp_per_correct", 15)
         bonus = await self.get_int("winner_bonus_xp", 20)
         win_coin_bonus = await self.get_int("random_duel_win_coin_bonus", 20)
-        reward_details: dict[int, dict[str, int]] = {p1: {"answer_coins": 0, "win_coins": 0, "answer_xp": 0, "win_xp": 0}, p2: {"answer_coins": 0, "win_coins": 0, "answer_xp": 0, "win_xp": 0}}
+        draw_coin_reward = await self.get_int("duel_draw_coin_reward", 5)
+        reward_details: dict[int, dict[str, int]] = {p1: {"answer_coins": 0, "win_coins": 0, "draw_coins": 0, "answer_xp": 0, "win_xp": 0}, p2: {"answer_coins": 0, "win_coins": 0, "draw_coins": 0, "answer_xp": 0, "win_xp": 0}}
         for uid, st in stats.items():
             if st["score"]:
                 answer_coins = int(st["score"] * coin_per) if is_random_duel else 0
@@ -972,6 +974,9 @@ class Database:
                     await self.change_cups(uid, int(league["win_cups"]), "duel_win", duel_id, league["id"])
                 await self.execute_write("UPDATE users SET wins=wins+1, last_duel_at=? WHERE telegram_id=?", (now_iso(), uid))
             elif winner is None:
+                if draw_coin_reward:
+                    await self.change_coins(uid, draw_coin_reward, "duel_draw_reward", duel_id)
+                    reward_details[uid]["draw_coins"] = draw_coin_reward
                 await self.execute_write("UPDATE users SET draws=draws+1, last_duel_at=? WHERE telegram_id=?", (now_iso(), uid))
             else:
                 if league:
@@ -1222,6 +1227,22 @@ class Database:
                                       GROUP BY g.name,g.sort_order
                                       ORDER BY g.sort_order,g.name""", (status,))
         return [(r["genre"], int(r["c"])) for r in rows]
+
+
+    async def search_questions(self, query: str, page: int = 0, limit: int = 10) -> list[aiosqlite.Row]:
+        offset = max(0, page) * limit
+        if query.strip().isdigit():
+            return await self.fetchall("SELECT * FROM questions WHERE id=? LIMIT ? OFFSET ?", (int(query.strip()), limit, offset))
+        return await self.fetchall("SELECT * FROM questions WHERE text LIKE ? ORDER BY id DESC LIMIT ? OFFSET ?", (f"%{query.strip()}%", limit, offset))
+
+    async def update_question_text(self, qid: int, text: str) -> None:
+        await self.execute_write("UPDATE questions SET text=? WHERE id=?", (text, qid))
+
+    async def update_question_options(self, qid: int, opts: list[str], correct: int) -> None:
+        await self.execute_write("UPDATE questions SET option1=?,option2=?,option3=?,option4=?,correct_option=? WHERE id=?", (opts[0], opts[1], opts[2], opts[3], correct, qid))
+
+    async def update_question_genre(self, qid: int, genre: str) -> None:
+        await self.execute_write("UPDATE questions SET genre=? WHERE id=?", (genre, qid))
 
     async def pending_question_genre_counts(self) -> list[tuple[str, int]]:
         return await self.question_genre_counts("pending")

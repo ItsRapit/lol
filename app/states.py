@@ -65,6 +65,15 @@ class QuestionCleanupFlow(StatesGroup):
     confirm_delete_invalid = State()
 
 
+class QuestionEditFlow(StatesGroup):
+    text = State()
+    option1 = State()
+    option2 = State()
+    option3 = State()
+    option4 = State()
+    correct = State()
+
+
 class TitleFlow(StatesGroup):
     name = State()
     emoji = State()

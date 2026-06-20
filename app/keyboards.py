@@ -321,10 +321,35 @@ def report_admin_keyboard(qid: int, report_id: int) -> InlineKeyboardMarkup:
 
 def question_admin_actions_keyboard(qid: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="ویرایش ✏️", callback_data=f"qact:edit:{qid}")
+    b.button(text="✏️ ویرایش صورت سوال", callback_data=f"qedit:text:{qid}")
+    b.button(text="🔘 ویرایش گزینه‌ها", callback_data=f"qedit:options:{qid}")
+    b.button(text="🏷 ویرایش دسته‌بندی", callback_data=f"qedit:genre:{qid}")
     b.button(text="حذف 🗑", callback_data=f"qact:delete:{qid}")
     b.button(text="غیرفعال ⏸", callback_data=f"qact:disable:{qid}")
-    b.adjust(3)
+    b.button(text="🔙 بازگشت", callback_data="admin:question_management")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def question_search_results_keyboard(results, page: int, query: str) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for q in results:
+        b.button(text=f"مشاهده و ویرایش #{q['id']}", callback_data=f"qadmin:view:{q['id']}")
+    if page > 0:
+        b.button(text="⬅️ قبلی", callback_data=f"qsearch:{page-1}:{query}")
+    if len(results) >= 10:
+        b.button(text="بعدی ➡️", callback_data=f"qsearch:{page+1}:{query}")
+    b.button(text="🔙 بازگشت", callback_data="admin:question_management")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def genre_edit_keyboard(qid: int, genres: list[str]) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for g in genres:
+        b.button(text=g, callback_data=f"qedit_genre:{qid}:{g}")
+    b.button(text="🔙 بازگشت", callback_data=f"qadmin:view:{qid}")
+    b.adjust(2)
     return b.as_markup()
 
 
