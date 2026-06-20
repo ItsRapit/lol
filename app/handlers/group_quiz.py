@@ -27,6 +27,7 @@ class GroupLobby:
     players: dict[int, str] = field(default_factory=dict)
     usernames: dict[int, str | None] = field(default_factory=dict)
     started: bool = False
+    timeout_task: asyncio.Task | None = None
 
 
 @dataclass
@@ -173,6 +174,43 @@ async def require_registered_and_join(call: CallbackQuery, db: Database, bot: Bo
     return await require_force_join(call, db, bot)
 
 
+def active_lobbies_in_chat(chat_id: int) -> list[GroupLobby]:
+    return [l for l in lobbies.values() if l.chat_id == chat_id and not l.started]
+
+
+def is_user_in_active_group_game(user_id: int) -> bool:
+    for lobby in lobbies.values():
+        if user_id in lobby.players:
+            return True
+    for game in games.values():
+        if user_id in game.lobby.players:
+            return True
+    for game in group_duels.values():
+        if user_id in game.lobby.players:
+            return True
+    return False
+
+
+async def lobby_timeout(lobby_id: str, bot: Bot) -> None:
+    try:
+        await asyncio.sleep(600)
+        lobby = lobbies.get(lobby_id)
+        if not lobby or lobby.started:
+            return
+        lobbies.pop(lobby_id, None)
+        try:
+            if lobby.inline_message_id:
+                await bot.edit_message_text("⏰ لابی بازی به دلیل عدم شروع در 10 دقیقه بسته شد.", inline_message_id=lobby.inline_message_id, reply_markup=None)
+            elif lobby.chat_id and lobby.message_id:
+                await bot.edit_message_text("⏰ لابی بازی به دلیل عدم شروع در 10 دقیقه بسته شد.", chat_id=lobby.chat_id, message_id=lobby.message_id, reply_markup=None)
+        except Exception:
+            logger.warning("Lobby timeout edit failed", exc_info=True)
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        logger.exception("Lobby timeout failed")
+
+
 def lobby_keyboard(lobby_id: str) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="✋ پایه‌ام", callback_data=f"gquiz:join:{lobby_id}")
@@ -221,9 +259,11 @@ async def group_quiz_start(message: Message, db: Database, bot: Bot) -> None:
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎯 شروع ربات", url=f"https://t.me/{me.username}")]])
         )
         return
-    key = f"chat:{message.chat.id}"
-    if any(l.chat_id == message.chat.id and not l.started for l in lobbies.values()):
-        await message.answer("در این گروه یک لابی فعال وجود دارد.")
+    if is_user_in_active_group_game(message.from_user.id):
+        await message.answer("تا بازی فعلیت تموم نشده نمی‌تونی بازی جدید شروع کنی")
+        return
+    if len(active_lobbies_in_chat(message.chat.id)) >= 3:
+        await message.answer("در این گروه 3 لابی فعال وجود داره. صبر کن یکی تموم بشه")
         return
     lobby_id = f"chat_{abs(message.chat.id)}_{message.message_id}"
     lobby = GroupLobby(lobby_id=lobby_id, starter_id=message.from_user.id, chat_id=message.chat.id)
@@ -233,6 +273,7 @@ async def group_quiz_start(message: Message, db: Database, bot: Bot) -> None:
     max_players = await db.get_int("group_quiz_max_players", 8)
     msg = await message.answer(lobby_text(lobby, max_players), reply_markup=lobby_keyboard(lobby_id))
     lobby.message_id = msg.message_id
+    lobby.timeout_task = asyncio.create_task(lobby_timeout(lobby_id, message.bot))
 
 
 @router.inline_query()
@@ -282,6 +323,7 @@ async def chosen_result_handler(chosen: ChosenInlineResult, bot: Bot, db: Databa
         lobby.players[chosen.from_user.id] = chosen.from_user.full_name
         lobby.usernames[chosen.from_user.id] = chosen.from_user.username
         lobbies[lobby_id] = lobby
+        lobby.timeout_task = asyncio.create_task(lobby_timeout(lobby_id, bot))
         try:
             await edit_lobby(bot, lobby, lobby_text(lobby, await db.get_int("group_quiz_max_players", 8)), lobby_keyboard(lobby_id))
         except Exception:
@@ -293,6 +335,7 @@ async def chosen_result_handler(chosen: ChosenInlineResult, bot: Bot, db: Databa
         lobby.players[chosen.from_user.id] = chosen.from_user.full_name
         lobby.usernames[chosen.from_user.id] = chosen.from_user.username
         lobbies[lobby_id] = lobby
+        lobby.timeout_task = asyncio.create_task(lobby_timeout(lobby_id, bot))
 
 
 @router.callback_query(F.data.in_({"group_quiz_join_inline", "group_quiz_join"}))
@@ -376,6 +419,8 @@ async def group_start_game(call: CallbackQuery, db: Database, bot: Bot) -> None:
 async def start_lobby_game(call: CallbackQuery, db: Database, bot: Bot, lobby: GroupLobby) -> None:
     try:
         lobby.started = True
+        if lobby.timeout_task and not lobby.timeout_task.done():
+            lobby.timeout_task.cancel()
         await edit_lobby(bot, lobby, "⏳ بازی در حال شروع...", None)
         count = await db.get_int("group_quiz_question_count", 5)
         rows = await db.fetchall("SELECT * FROM questions WHERE status='active' ORDER BY RANDOM() LIMIT ?", (count,))
@@ -397,6 +442,7 @@ async def send_group_question(bot: Bot, db: Database, game: GroupGame, idx: int)
     q = game.questions[idx]
     game.current_idx = idx
     game.question_ended = False
+    game.question_lock = asyncio.Lock()
     game.answered[idx] = {}
     total_seconds = await db.get_int('group_quiz_timer_seconds', 30)
     game.remaining[idx] = total_seconds
@@ -528,6 +574,9 @@ async def finish_group_game(bot: Bot, db: Database, game: GroupGame) -> None:
         lines.append(f"{pos}. {trim_name(name)} — {score}/{len(game.questions)} ✅ (+{xp} XP)")
     text = "🏆 نتیجه‌ی بازی\n━━━━━━━━━━━━━━\n" + "\n".join(lines) + "\n━━━━━━━━━━━━━━"
     await edit_lobby(bot, game.lobby, text, None)
+    for task in game.timer_tasks.values():
+        if task and not task.done():
+            task.cancel()
     await db.log_group_game('quiz', game.lobby.chat_id, game.lobby.inline_message_id, len(game.lobby.players), len(game.questions))
     if game.lobby.chat_id:
         for _, mention, old_level, new_level, title_text in levelups:

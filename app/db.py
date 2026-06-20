@@ -390,6 +390,7 @@ class Database:
             "reports_channel_id": ("", "Admin reports/log channel id"),
             "force_join_enabled": ("0", "Enable force join channel before games"),
             "force_join_channel": ("", "Force join channel username or id"),
+            "question_filter_words": ("ربات,ماشین,بازی", "Comma-separated words for question cleanup"),
             "levelup_anim1_step1": ("⬆️ داری لول آپ می‌کنی...", "Level-up animation 1 step 1"),
             "levelup_anim1_step2": ("⬆️⬆️ داری لول آپ می‌کنی...", "Level-up animation 1 step 2"),
             "levelup_anim1_step3": ("🎉 لول آپ!\nبه {level_name} رسیدی!\nلول {old_level} ← لول {new_level}", "Level-up animation 1 final"),
