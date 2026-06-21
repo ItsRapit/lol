@@ -397,3 +397,13 @@ def admin_submenu_keyboard(kind: str) -> InlineKeyboardMarkup:
     b.button(text="🔙 بازگشت", callback_data="admin:back")
     b.adjust(1)
     return b.as_markup()
+
+
+
+def group_duel_lobby_keyboard() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="⚔️ قبول می‌کنم", callback_data="group_duel_accept")
+    b.button(text="🚪 خروج از دوئل", callback_data="group_duel_leave")
+    b.button(text="❌ بستن دوئل", callback_data="group_duel_close")
+    b.adjust(1)
+    return b.as_markup()

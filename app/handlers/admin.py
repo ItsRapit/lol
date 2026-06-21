@@ -3,7 +3,7 @@ import logging
 from datetime import datetime
 from aiogram import Bot, Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, FSInputFile, ReplyKeyboardRemove
+from aiogram.types import Message, CallbackQuery, FSInputFile, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from app.db import Database, now_iso
 from app.keyboards import (
@@ -18,6 +18,7 @@ from app.states import AdminFlow, BulkQuestionImport, ShopPackageFlow, LeagueFlo
 from app.bulk_questions import parse_bulk_questions, format_bulk_report, bulk_help_text, extract_json_text, is_json_balanced, looks_like_json, looks_like_bulk_text
 from app.time_utils import tehran_now, jalali_datetime
 from app.notifications import run_edit_animation, levelup_steps, rankup_steps, title_steps, demotion_steps
+from app.clean_questions import get_filter_words, get_duplicate_stats, get_keyword_stats, clean_duplicate_questions, clean_keyword_questions
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -309,6 +310,137 @@ async def sync_defaults_command(message: Message, db: Database) -> None:
     except Exception:
         logger.exception("Sync defaults failed")
         await message.answer("خطا در sync defaults.")
+
+
+@router.message(Command("filterwords"))
+async def filterwords_command(message: Message, db: Database) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        words = await get_filter_words(db)
+        await message.answer("🔤 کلمات فیلتر فعلی:\n" + ("، ".join(words) if words else "هیچ کلمه‌ای ثبت نشده"))
+    except Exception:
+        logger.exception("Filterwords command failed")
+        await message.answer("خطا در نمایش کلمات فیلتر.")
+
+
+@router.message(Command("addfilterword"))
+async def add_filterword_command(message: Message, db: Database) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        parts = (message.text or "").split(maxsplit=1)
+        if len(parts) != 2 or not parts[1].strip():
+            await message.answer("فرمت درست: /addfilterword کلمه")
+            return
+        word = parts[1].strip()
+        words = await get_filter_words(db)
+        if word not in words:
+            words.append(word)
+            await db.set_setting("question_filter_words", ",".join(words))
+        await message.answer("✅ کلمه اضافه شد.\n" + "، ".join(words))
+    except Exception:
+        logger.exception("Add filterword failed")
+        await message.answer("خطا در افزودن کلمه فیلتر.")
+
+
+@router.message(Command("removefilterword"))
+async def remove_filterword_command(message: Message, db: Database) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        parts = (message.text or "").split(maxsplit=1)
+        if len(parts) != 2 or not parts[1].strip():
+            await message.answer("فرمت درست: /removefilterword کلمه")
+            return
+        word = parts[1].strip()
+        words = [w for w in await get_filter_words(db) if w != word]
+        await db.set_setting("question_filter_words", ",".join(words))
+        await message.answer("✅ کلمه حذف شد.\n" + ("، ".join(words) if words else "لیست خالی است"))
+    except Exception:
+        logger.exception("Remove filterword failed")
+        await message.answer("خطا در حذف کلمه فیلتر.")
+
+
+@router.message(Command("cleanquestions"))
+async def cleanquestions_command(message: Message, db: Database) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        words = await get_filter_words(db)
+        dup = await get_duplicate_stats(db)
+        kw = await get_keyword_stats(db, words)
+        await message.answer(
+            f"🔍 نتیجه‌ی بررسی:\n\n"
+            f"📋 سوالات تکراری عیناً یکسان: {dup['groups']} گروه — {dup['to_delete']} سوال حذف می‌شود\n"
+            f"🔤 سوالات حاوی کلمات فیلتر: {kw['to_delete']} سوال حذف می‌شود\n\n"
+            f"کلمات فیلتر: {', '.join(words) if words else '-'}\n\n"
+            f"برای تأیید /confirmclean را بزن",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="✅ تأیید و پاک‌کردن", callback_data="confirm_clean"),
+                InlineKeyboardButton(text="❌ انصراف", callback_data="cancel_clean"),
+            ]])
+        )
+    except Exception:
+        logger.exception("Cleanquestions command failed")
+        await message.answer("خطا در بررسی پاک‌سازی سوالات.")
+
+
+@router.message(Command("confirmclean"))
+async def confirmclean_command(message: Message, db: Database) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        backup = await db.export_section_backup("questions")
+        words = await get_filter_words(db)
+        dup_result = await clean_duplicate_questions(db)
+        kw_result = await clean_keyword_questions(db, words)
+        details = "\n".join(kw_result["details"]) if kw_result["details"] else "موردی یافت نشد"
+        await db.log_admin(message.from_user.id, "cleanquestions", details=f"backup={backup}")
+        await message.answer(
+            f"✅ پاک‌سازی انجام شد\n\n"
+            f"🗂 بک‌آپ قبل از حذف: <code>{backup}</code>\n"
+            f"🗑 سوالات تکراری حذف‌شده: {dup_result['deleted']}\n"
+            f"🔤 سوالات کلمات فیلتر:\n{details}\n\n"
+            f"📊 جمع کل حذف‌شده: {dup_result['deleted'] + kw_result['deleted']}"
+        )
+    except Exception:
+        logger.exception("Confirm clean failed")
+        await message.answer("خطا در پاک‌سازی سوالات.")
+
+
+@router.callback_query(F.data == "confirm_clean")
+async def confirm_clean_callback(call: CallbackQuery, db: Database) -> None:
+    await call.answer()
+    try:
+        if not await require_admin_call(call, db):
+            return
+        backup = await db.export_section_backup("questions")
+        await call.message.edit_text("⏳ در حال پاک‌کردن...")
+        words = await get_filter_words(db)
+        dup_result = await clean_duplicate_questions(db)
+        kw_result = await clean_keyword_questions(db, words)
+        details = "\n".join(kw_result["details"]) if kw_result["details"] else "موردی یافت نشد"
+        await db.log_admin(call.from_user.id, "cleanquestions", details=f"backup={backup}")
+        await call.message.edit_text(
+            f"✅ پاک‌سازی انجام شد\n\n"
+            f"🗂 بک‌آپ قبل از حذف: <code>{backup}</code>\n"
+            f"🗑 سوالات تکراری حذف‌شده: {dup_result['deleted']}\n"
+            f"🔤 سوالات کلمات فیلتر:\n{details}\n\n"
+            f"📊 جمع کل حذف‌شده: {dup_result['deleted'] + kw_result['deleted']}"
+        )
+    except Exception:
+        logger.exception("Confirm clean callback failed")
+        await call.message.answer("خطا در پاک‌سازی سوالات.")
+
+
+@router.callback_query(F.data == "cancel_clean")
+async def cancel_clean_callback(call: CallbackQuery) -> None:
+    await call.answer("لغو شد", show_alert=False)
+    try:
+        await call.message.edit_text("❌ پاک‌سازی لغو شد.")
+    except Exception:
+        logger.exception("Cancel clean edit failed")
 
 
 @router.message(Command("guide"))

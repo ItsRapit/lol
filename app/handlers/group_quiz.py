@@ -12,6 +12,7 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.db import Database
+from app.keyboards import group_duel_lobby_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -121,7 +122,9 @@ def group_duel_genre_keyboard(lobby_id: str, genres: list[str], selected: dict[i
             text=(f"✅ {genre}" if taken else genre),
             callback_data=f"gduelgenre:{lobby_id}:{idx}",
         )
-    b.adjust(2)
+    b.button(text="🚪 خروج از دوئل", callback_data="group_duel_leave")
+    b.button(text="❌ بستن دوئل", callback_data="group_duel_close")
+    b.adjust(2, 2, 2, 2, 2, 1, 1)
     return b.as_markup()
 
 
@@ -301,7 +304,7 @@ async def inline_handler(query: InlineQuery, db: Database) -> None:
                 message_text=f"⚔️ دوئل چالشینو\n\n👤 چالش‌دهنده: {name}\n\nمنتظر حریف..."
             ),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⚔️ قبول می‌کنم", callback_data="group_duel_accept")],
+                *group_duel_lobby_keyboard().inline_keyboard,
             ]),
         )
         await query.answer([result, duel_result], cache_time=0)
@@ -824,3 +827,61 @@ async def finish_group_duel(bot: Bot, db: Database, game: GroupDuelGame) -> None
     lobbies.pop(game.lobby.lobby_id, None)
     group_duel_genres.pop(game.lobby.lobby_id, None)
     group_duel_offers.pop(game.lobby.lobby_id, None)
+
+
+async def find_inline_duel_lobby(inline_id: str | None) -> GroupLobby | None:
+    if not inline_id:
+        return None
+    return next((l for l in lobbies.values() if l.inline_message_id == inline_id and l.lobby_id.startswith("gduel_")), None)
+
+
+@router.callback_query(F.data == "group_duel_leave")
+async def group_duel_leave(call: CallbackQuery, bot: Bot) -> None:
+    await call.answer()
+    try:
+        lobby = await find_inline_duel_lobby(call.inline_message_id)
+        if not lobby:
+            await call.answer("دوئل پیدا نشد", show_alert=False)
+            return
+        if call.from_user.id not in lobby.players:
+            await call.answer("شما داخل این دوئل نیستید", show_alert=False)
+            return
+        if call.from_user.id == lobby.starter_id:
+            await edit_lobby(bot, lobby, "❌ بازی به دلیل خروج سازنده بسته شد", None)
+            lobbies.pop(lobby.lobby_id, None)
+            group_duel_genres.pop(lobby.lobby_id, None)
+            group_duel_offers.pop(lobby.lobby_id, None)
+            group_duels.pop(lobby.lobby_id, None)
+            return
+        lobby.players.pop(call.from_user.id, None)
+        lobby.usernames.pop(call.from_user.id, None)
+        group_duel_genres.get(lobby.lobby_id, {}).pop(call.from_user.id, None)
+        names = list(lobby.players.values())
+        await edit_lobby(
+            bot,
+            lobby,
+            f"⚔️ دوئل چالشینو\n\n👤 چالش‌دهنده: {trim_name(names[0]) if names else 'نامشخص'}\n\nمنتظر حریف...",
+            group_duel_lobby_keyboard(),
+        )
+    except Exception:
+        logger.exception("Group duel leave failed")
+
+
+@router.callback_query(F.data == "group_duel_close")
+async def group_duel_close(call: CallbackQuery, bot: Bot) -> None:
+    await call.answer()
+    try:
+        lobby = await find_inline_duel_lobby(call.inline_message_id)
+        if not lobby:
+            await call.answer("دوئل پیدا نشد", show_alert=False)
+            return
+        if call.from_user.id != lobby.starter_id:
+            await call.answer("فقط سازنده‌ی دوئل می‌تونه بازی رو ببنده", show_alert=False)
+            return
+        await edit_lobby(bot, lobby, "❌ دوئل توسط سازنده بسته شد", None)
+        lobbies.pop(lobby.lobby_id, None)
+        group_duel_genres.pop(lobby.lobby_id, None)
+        group_duel_offers.pop(lobby.lobby_id, None)
+        group_duels.pop(lobby.lobby_id, None)
+    except Exception:
+        logger.exception("Group duel close failed")
