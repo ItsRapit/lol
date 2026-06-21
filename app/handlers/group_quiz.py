@@ -123,8 +123,7 @@ def group_duel_genre_keyboard(lobby_id: str, genres: list[str], selected: dict[i
             callback_data=f"gduelgenre:{lobby_id}:{idx}",
         )
     b.button(text="🚪 خروج از دوئل", callback_data="group_duel_leave")
-    b.button(text="❌ بستن دوئل", callback_data="group_duel_close")
-    b.adjust(2, 2, 2, 2, 2, 1, 1)
+    b.adjust(2, 2, 2, 2, 2, 1)
     return b.as_markup()
 
 
@@ -869,19 +868,5 @@ async def group_duel_leave(call: CallbackQuery, bot: Bot) -> None:
 
 @router.callback_query(F.data == "group_duel_close")
 async def group_duel_close(call: CallbackQuery, bot: Bot) -> None:
-    await call.answer()
-    try:
-        lobby = await find_inline_duel_lobby(call.inline_message_id)
-        if not lobby:
-            await call.answer("دوئل پیدا نشد", show_alert=False)
-            return
-        if call.from_user.id != lobby.starter_id:
-            await call.answer("فقط سازنده‌ی دوئل می‌تونه بازی رو ببنده", show_alert=False)
-            return
-        await edit_lobby(bot, lobby, "❌ دوئل توسط سازنده بسته شد", None)
-        lobbies.pop(lobby.lobby_id, None)
-        group_duel_genres.pop(lobby.lobby_id, None)
-        group_duel_offers.pop(lobby.lobby_id, None)
-        group_duels.pop(lobby.lobby_id, None)
-    except Exception:
-        logger.exception("Group duel close failed")
+    # Backward compatibility for old inline messages created before removing this button.
+    await call.answer("این دکمه دیگر فعال نیست؛ برای بستن دوئل سازنده باید خروج از دوئل را بزند", show_alert=False)
