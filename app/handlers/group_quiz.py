@@ -122,8 +122,7 @@ def group_duel_genre_keyboard(lobby_id: str, genres: list[str], selected: dict[i
             text=(f"✅ {genre}" if taken else genre),
             callback_data=f"gduelgenre:{lobby_id}:{idx}",
         )
-    b.button(text="🚪 خروج از دوئل", callback_data="group_duel_leave")
-    b.adjust(2, 2, 2, 2, 2, 1)
+    b.adjust(2)
     return b.as_markup()
 
 
@@ -217,7 +216,8 @@ def lobby_keyboard(lobby_id: str) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="✋ پایه‌ام", callback_data=f"gquiz:join:{lobby_id}")
     b.button(text="🚀 شروع بازی", callback_data=f"gquiz:start:{lobby_id}")
-    b.adjust(2)
+    b.button(text="🚪 خروج از دوئل", callback_data=f"gquiz:leave:{lobby_id}")
+    b.adjust(3)
     return b.as_markup()
 
 
@@ -290,10 +290,11 @@ async def inline_handler(query: InlineQuery, db: Database) -> None:
         input_message_content=InputTextMessageContent(
             message_text=f"🎮 بازی گروهی چالشینو\n\n👤 سازنده: {name}\n👥 شرکت‌کنندگان: 1/{max_players}\n\n✅ {name}"
         ),
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✋ پایه‌ام", callback_data="group_quiz_join")],
-            [InlineKeyboardButton(text="🚀 شروع بازی", callback_data="group_quiz_start")],
-        ]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✋ پایه‌ام", callback_data="group_quiz_join"),
+            InlineKeyboardButton(text="🚀 شروع بازی", callback_data="group_quiz_start"),
+            InlineKeyboardButton(text="🚪 خروج از دوئل", callback_data="group_quiz_leave"),
+        ]]),
     )
         duel_result = InlineQueryResultArticle(
             id="group_duel",
@@ -302,9 +303,9 @@ async def inline_handler(query: InlineQuery, db: Database) -> None:
             input_message_content=InputTextMessageContent(
                 message_text=f"⚔️ دوئل چالشینو\n\n👤 چالش‌دهنده: {name}\n\nمنتظر حریف..."
             ),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                *group_duel_lobby_keyboard().inline_keyboard,
-            ]),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="⚔️ قبول می‌کنم", callback_data="group_duel_accept"),
+            ]]),
         )
         await query.answer([result, duel_result], cache_time=0)
     except Exception as e:
@@ -338,6 +339,15 @@ async def chosen_result_handler(chosen: ChosenInlineResult, bot: Bot, db: Databa
         lobby.usernames[chosen.from_user.id] = chosen.from_user.username
         lobbies[lobby_id] = lobby
         lobby.timeout_task = asyncio.create_task(lobby_timeout(lobby_id, bot))
+        try:
+            await bot.edit_message_reply_markup(
+                inline_message_id=chosen.inline_message_id,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text="⚔️ قبول می‌کنم", callback_data="group_duel_accept"),
+                ]]),
+            )
+        except Exception:
+            logger.exception("Could not ensure group duel lobby leave button")
 
 
 @router.callback_query(F.data.in_({"group_quiz_join_inline", "group_quiz_join"}))
@@ -352,6 +362,43 @@ async def inline_join_redirect(call: CallbackQuery, db: Database, bot: Bot) -> N
         await call.answer("بازی پیدا نشد. Inline Feedback را در BotFather روی 100% بگذار و دوباره تلاش کن.", show_alert=False)
         return
     await join_lobby(call, db, bot, lobby)
+
+
+async def close_or_update_group_lobby_after_leave(bot: Bot, lobby: GroupLobby, user_id: int) -> None:
+    if user_id == lobby.starter_id:
+        await edit_lobby(bot, lobby, "❌ بازی به دلیل خروج سازنده بسته شد", None)
+        lobbies.pop(lobby.lobby_id, None)
+        return
+    lobby.players.pop(user_id, None)
+    lobby.usernames.pop(user_id, None)
+    await edit_lobby(bot, lobby, lobby_text(lobby, 8), lobby_keyboard(lobby.lobby_id))
+
+
+@router.callback_query(F.data == "group_quiz_leave")
+async def inline_group_quiz_leave(call: CallbackQuery, bot: Bot) -> None:
+    await call.answer()
+    lobby = next((l for l in lobbies.values() if l.inline_message_id == call.inline_message_id and not l.started), None)
+    if not lobby:
+        await call.answer("لابی پیدا نشد", show_alert=False)
+        return
+    if call.from_user.id not in lobby.players:
+        await call.answer("شما داخل این لابی نیستید", show_alert=False)
+        return
+    await close_or_update_group_lobby_after_leave(bot, lobby, call.from_user.id)
+
+
+@router.callback_query(F.data.startswith("gquiz:leave:"))
+async def group_quiz_leave(call: CallbackQuery, bot: Bot) -> None:
+    await call.answer()
+    lobby_id = call.data.split(":", 2)[2]
+    lobby = lobbies.get(lobby_id)
+    if not lobby or lobby.started:
+        await call.answer("لابی پیدا نشد", show_alert=False)
+        return
+    if call.from_user.id not in lobby.players:
+        await call.answer("شما داخل این لابی نیستید", show_alert=False)
+        return
+    await close_or_update_group_lobby_after_leave(bot, lobby, call.from_user.id)
 
 
 @router.callback_query(F.data == "group_quiz_start")
