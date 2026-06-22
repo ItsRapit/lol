@@ -18,7 +18,7 @@ from app.states import AdminFlow, BulkQuestionImport, ShopPackageFlow, LeagueFlo
 from app.bulk_questions import parse_bulk_questions, format_bulk_report, bulk_help_text, extract_json_text, is_json_balanced, looks_like_json, looks_like_bulk_text
 from app.time_utils import tehran_now, jalali_datetime
 from app.notifications import run_edit_animation, levelup_steps, rankup_steps, title_steps, demotion_steps
-from app.clean_questions import get_filter_words, get_duplicate_stats, get_keyword_stats, clean_duplicate_questions, clean_keyword_questions
+from app.clean_questions import get_filter_words, get_clean_stats, clean_duplicate_questions
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -367,19 +367,13 @@ async def cleanquestions_command(message: Message, db: Database) -> None:
     try:
         if not await require_admin_message(message, db):
             return
-        words = await get_filter_words(db)
-        dup = await get_duplicate_stats(db)
-        kw = await get_keyword_stats(db, words)
+        stats = await get_clean_stats(db)
         await message.answer(
-            f"🔍 نتیجه‌ی بررسی:\n\n"
-            f"📋 سوالات تکراری عیناً یکسان: {dup['groups']} گروه — {dup['to_delete']} سوال حذف می‌شود\n"
-            f"🔤 سوالات حاوی کلمات فیلتر: {kw['to_delete']} سوال حذف می‌شود\n\n"
-            f"کلمات فیلتر: {', '.join(words) if words else '-'}\n\n"
-            f"برای تأیید /confirmclean را بزن",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="✅ تأیید و پاک‌کردن", callback_data="confirm_clean"),
-                InlineKeyboardButton(text="❌ انصراف", callback_data="cancel_clean"),
-            ]])
+            f"🔍 نتیجه‌ی بررسی:\n"
+            f"📋 عیناً تکراری: {stats['exact_groups']} گروه — {stats['exact_to_delete']} سوال حذف می‌شود\n"
+            f"🔎 مشابه (متن+جواب یکسان): {stats['similar_groups']} گروه — {stats['similar_to_delete']} سوال حذف می‌شود\n"
+            f"📊 جمع کل: {stats['total_to_delete']} سوال حذف می‌شود",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ تأیید و پاک‌کردن", callback_data="confirm_clean"), InlineKeyboardButton(text="❌ انصراف", callback_data="cancel_clean")]])
         )
     except Exception:
         logger.exception("Cleanquestions command failed")
@@ -392,17 +386,14 @@ async def confirmclean_command(message: Message, db: Database) -> None:
         if not await require_admin_message(message, db):
             return
         backup = await db.export_section_backup("questions")
-        words = await get_filter_words(db)
-        dup_result = await clean_duplicate_questions(db)
-        kw_result = await clean_keyword_questions(db, words)
-        details = "\n".join(kw_result["details"]) if kw_result["details"] else "موردی یافت نشد"
+        result = await clean_duplicate_questions(db)
         await db.log_admin(message.from_user.id, "cleanquestions", details=f"backup={backup}")
         await message.answer(
             f"✅ پاک‌سازی انجام شد\n\n"
             f"🗂 بک‌آپ قبل از حذف: <code>{backup}</code>\n"
-            f"🗑 سوالات تکراری حذف‌شده: {dup_result['deleted']}\n"
-            f"🔤 سوالات کلمات فیلتر:\n{details}\n\n"
-            f"📊 جمع کل حذف‌شده: {dup_result['deleted'] + kw_result['deleted']}"
+            f"📋 عیناً تکراری حذف‌شده: {result['exact_deleted']}\n"
+            f"🔎 مشابه حذف‌شده: {result['similar_deleted']}\n"
+            f"📊 جمع کل حذف‌شده: {result['deleted']}"
         )
     except Exception:
         logger.exception("Confirm clean failed")
@@ -417,17 +408,14 @@ async def confirm_clean_callback(call: CallbackQuery, db: Database) -> None:
             return
         backup = await db.export_section_backup("questions")
         await call.message.edit_text("⏳ در حال پاک‌کردن...")
-        words = await get_filter_words(db)
-        dup_result = await clean_duplicate_questions(db)
-        kw_result = await clean_keyword_questions(db, words)
-        details = "\n".join(kw_result["details"]) if kw_result["details"] else "موردی یافت نشد"
+        result = await clean_duplicate_questions(db)
         await db.log_admin(call.from_user.id, "cleanquestions", details=f"backup={backup}")
         await call.message.edit_text(
             f"✅ پاک‌سازی انجام شد\n\n"
             f"🗂 بک‌آپ قبل از حذف: <code>{backup}</code>\n"
-            f"🗑 سوالات تکراری حذف‌شده: {dup_result['deleted']}\n"
-            f"🔤 سوالات کلمات فیلتر:\n{details}\n\n"
-            f"📊 جمع کل حذف‌شده: {dup_result['deleted'] + kw_result['deleted']}"
+            f"📋 عیناً تکراری حذف‌شده: {result['exact_deleted']}\n"
+            f"🔎 مشابه حذف‌شده: {result['similar_deleted']}\n"
+            f"📊 جمع کل حذف‌شده: {result['deleted']}"
         )
     except Exception:
         logger.exception("Confirm clean callback failed")
