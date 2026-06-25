@@ -177,22 +177,47 @@ async def leaderboard_back(call: CallbackQuery) -> None:
 async def leaderboard_callback(call: CallbackQuery, db: Database) -> None:
     try:
         _, basis, period = call.data.split(":")
-        basis_title = "سطح" if basis == "level" else "لیگ"
-        period_title = {"daily": "روزانه", "monthly": "ماهانه", "all": "کلی"}.get(period, "کلی")
         rows = await db.leaderboard(basis, period)
-        text = rtl_line(f"🏆 لیدربورد {basis_title} — {period_title}") + "\n\n"
-        if not rows:
-            text += rtl_line("هنوز امتیازی ثبت نشده است.")
-        for i, r in enumerate(rows, 1):
-            raw_name = r['first_name'] or (('@' + r['username']) if r['username'] else str(r['telegram_id']))
-            name = raw_name if len(raw_name) <= 17 else raw_name[:17] + "..."
-            safe_name = f"\u2068{name}\u2069"
-            league_name = league_with_emoji(r['league_name'])
-            if basis == "league":
-                line = f"{i}. {safe_name} | {league_name} | جام: {r['cups']} | سطح: {r['level']}"
-            else:
-                line = f"{i}. {safe_name} | {league_name} | جام: {r['cups']} | سطح: {r['level']} | امتیاز: {r['score']}"
-            text += rtl_line(line) + "\n"
+        medals = ["🥇", "🥈", "🥉"]
+        if basis == "league":
+            text = "🏆 لیدربرد لیگ\n\n"
+            if not rows:
+                text += "هنوز رتبه‌ای ثبت نشده است.\n"
+            for i, r in enumerate(rows[:10], 1):
+                raw_name = r['first_name'] or (('@' + r['username']) if r['username'] else str(r['telegram_id']))
+                name = raw_name if len(raw_name) <= 20 else raw_name[:20] + "..."
+                prefix = medals[i - 1] if i <= 3 else f"#{i}"
+                text += f"{prefix} {name} — {league_with_emoji(r['league_name'])} — 🏆 {r['cups']}\n"
+            me = await db.leaderboard_user_position(call.from_user.id, basis, period)
+            if me:
+                text += (
+                    "\n━━━━━━━━━━━━━━\n\n"
+                    "📍 رتبه شما:\n"
+                    f"#{me['rank']}\n\n"
+                    f"👑 لیگ شما: {league_with_emoji(me['league_name'])}\n"
+                    f"🏆 جام شما: {me['cups']}\n"
+                    "━━━━━━━━━━━━━━"
+                )
+        else:
+            text = "🏆 لیدربرد XP\n\n"
+            if not rows:
+                text += "هنوز رتبه‌ای ثبت نشده است.\n"
+            for i, r in enumerate(rows[:10], 1):
+                raw_name = r['first_name'] or (('@' + r['username']) if r['username'] else str(r['telegram_id']))
+                name = raw_name if len(raw_name) <= 20 else raw_name[:20] + "..."
+                prefix = medals[i - 1] if i <= 3 else f"#{i}"
+                xp_value = int(r['xp'] if 'xp' in r.keys() else r['score'])
+                text += f"{prefix} {name} — Level {r['level']} — XP {xp_value:,}\n"
+            me = await db.leaderboard_user_position(call.from_user.id, basis, period)
+            if me:
+                text += (
+                    "\n━━━━━━━━━━━━━━\n\n"
+                    "📍 رتبه شما:\n"
+                    f"#{me['rank']}\n\n"
+                    f"🎖 Level: {me['level']}\n"
+                    f"⭐ XP: {me['xp']:,}\n"
+                    "━━━━━━━━━━━━━━"
+                )
         await call.message.edit_text(text, reply_markup=leaderboard_period_keyboard(basis))
         await call.answer()
     except Exception:

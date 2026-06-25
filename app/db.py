@@ -941,9 +941,9 @@ class Database:
             old_title = await self.user_title(uid)
             before[uid] = {"level": int(u["level"] if u else 1), "coins": int(u["coins"] if u else 0), "xp": int(u["xp"] if u else 0), "cups": int(u["cups"] if u else 0), "title_id": old_title["id"] if old_title else None, "title_name": ((old_title["emoji"] or "") + " " + old_title["name"]).strip() if old_title else "بدون لقب", "league_id": lg["id"] if lg else None, "league_name": lg["name"] if lg else "بدون لیگ", "league_order": int(lg["sort_order"] if lg else 0)}
         winner = None
-        if (stats[p1]["correct"], -stats[p1]["speed"]) > (stats[p2]["correct"], -stats[p2]["speed"]):
+        if stats[p1]["correct"] > stats[p2]["correct"]:
             winner = p1
-        elif (stats[p2]["correct"], -stats[p2]["speed"]) > (stats[p1]["correct"], -stats[p1]["speed"]):
+        elif stats[p2]["correct"] > stats[p1]["correct"]:
             winner = p2
         await self.execute_write("UPDATE duels SET status='finished', finished_at=?, winner_id=? WHERE id=?", (now_iso(), winner, duel_id))
         is_random_duel = not bool(duel["invite_token"])
@@ -1068,23 +1068,57 @@ class Database:
             since = (datetime.now(UTC) - timedelta(days=30)).isoformat(timespec="seconds")
         if basis == "league":
             if since:
-                return await self.fetchall("""SELECT u.telegram_id,u.first_name,u.username,u.level,u.cups,
+                return await self.fetchall("""SELECT u.telegram_id,u.first_name,u.username,u.level,u.xp,u.cups,
                                            COALESCE(SUM(c.amount),0) score,
                                            COALESCE((SELECT l.name FROM leagues l WHERE l.is_active=1 AND l.min_cups<=u.cups ORDER BY l.min_cups DESC LIMIT 1),'بدون لیگ') league_name
                                            FROM users u LEFT JOIN cup_events c ON c.user_id=u.telegram_id AND c.created_at>=?
                                            GROUP BY u.telegram_id ORDER BY score DESC,u.cups DESC LIMIT 10""", (since,))
-            return await self.fetchall("""SELECT u.telegram_id,u.first_name,u.username,u.level,u.cups,u.cups score,
+            return await self.fetchall("""SELECT u.telegram_id,u.first_name,u.username,u.level,u.xp,u.cups,u.cups score,
                                        COALESCE((SELECT l.name FROM leagues l WHERE l.is_active=1 AND l.min_cups<=u.cups ORDER BY l.min_cups DESC LIMIT 1),'بدون لیگ') league_name
                                        FROM users u ORDER BY u.cups DESC,u.level DESC LIMIT 10""")
         if since:
-            return await self.fetchall("""SELECT u.telegram_id,u.first_name,u.username,u.level,u.cups,
+            return await self.fetchall("""SELECT u.telegram_id,u.first_name,u.username,u.level,u.xp,u.cups,
                                        COALESCE(SUM(x.amount),0) score,
                                        COALESCE((SELECT l.name FROM leagues l WHERE l.is_active=1 AND l.min_cups<=u.cups ORDER BY l.min_cups DESC LIMIT 1),'بدون لیگ') league_name
                                        FROM users u LEFT JOIN xp_events x ON x.user_id=u.telegram_id AND x.created_at>=?
                                        GROUP BY u.telegram_id ORDER BY score DESC,u.level DESC LIMIT 10""", (since,))
-        return await self.fetchall("""SELECT u.telegram_id,u.first_name,u.username,u.level,u.cups,u.level score,
+        return await self.fetchall("""SELECT u.telegram_id,u.first_name,u.username,u.level,u.xp,u.cups,u.xp score,
                                    COALESCE((SELECT l.name FROM leagues l WHERE l.is_active=1 AND l.min_cups<=u.cups ORDER BY l.min_cups DESC LIMIT 1),'بدون لیگ') league_name
                                    FROM users u ORDER BY u.level DESC,u.xp DESC LIMIT 10""")
+
+
+    async def leaderboard_user_position(self, tg_id: int, basis: str = "level", period: str = "all") -> dict[str, Any] | None:
+        user = await self.get_user(tg_id)
+        if not user:
+            return None
+        league = await self.get_user_league(int(user['cups']))
+        if basis == "league":
+            # Same all-time ordering used by leaderboard league: cups desc, level desc.
+            row = await self.fetchone(
+                "SELECT COUNT(*) c FROM users WHERE cups>? OR (cups=? AND level>? ) OR (cups=? AND level=? AND telegram_id<?)",
+                (user['cups'], user['cups'], user['level'], user['cups'], user['level'], tg_id),
+            )
+            rank = int(row['c'] if row else 0) + 1
+            return {
+                'rank': rank,
+                'level': int(user['level']),
+                'xp': int(user['xp']),
+                'cups': int(user['cups']),
+                'league_name': league['name'] if league else 'بدون لیگ',
+            }
+        # Same all-time ordering used by leaderboard XP: level desc, xp desc.
+        row = await self.fetchone(
+            "SELECT COUNT(*) c FROM users WHERE level>? OR (level=? AND xp>?) OR (level=? AND xp=? AND telegram_id<?)",
+            (user['level'], user['level'], user['xp'], user['level'], user['xp'], tg_id),
+        )
+        rank = int(row['c'] if row else 0) + 1
+        return {
+            'rank': rank,
+            'level': int(user['level']),
+            'xp': int(user['xp']),
+            'cups': int(user['cups']),
+            'league_name': league['name'] if league else 'بدون لیگ',
+        }
 
     async def create_shop_tx(self, user_id: int, package_id: int) -> int:
         pkg = await self.get_package(package_id)

@@ -29,6 +29,11 @@ class GroupLobby:
     usernames: dict[int, str | None] = field(default_factory=dict)
     started: bool = False
     timeout_task: asyncio.Task | None = None
+    stage: str = "genre"
+    offered_genres: list[str] = field(default_factory=list)
+    selected_genres: list[str] = field(default_factory=list)
+    question_count: int = 5
+    timer_seconds: int = 30
 
 
 @dataclass
@@ -108,7 +113,6 @@ def group_question_text(game: GroupGame, idx: int, remaining: int, total_seconds
     return (
         f"❓ سوال {idx+1} از {len(game.questions)}\n"
         f"━━━━━━━━━━━━━━\n{q['text']}\n━━━━━━━━━━━━━━\n"
-        f"⏱️ {bar(remaining, total_seconds)} {remaining}s\n"
         f"{player_progress_lines(game, idx)}\n"
         f"✅ {answered_count}/{total} نفر جواب دادن"
     )
@@ -212,12 +216,39 @@ async def lobby_timeout(lobby_id: str, bot: Bot) -> None:
         logger.exception("Lobby timeout failed")
 
 
+def group_genre_keyboard(lobby: GroupLobby) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    selected = set(lobby.selected_genres)
+    for idx, genre in enumerate(lobby.offered_genres[:8]):
+        mark = "☑️" if genre in selected else "⬜"
+        b.button(text=f"{mark} {genre}", callback_data=f"gqgenre:{lobby.lobby_id}:{idx}")
+    if len(lobby.selected_genres) == 2:
+        b.button(text="ادامه", callback_data=f"gqcontinue:{lobby.lobby_id}")
+    else:
+        b.button(text="ادامه (2 ژانر انتخاب کن)", callback_data="noop")
+    b.adjust(2, 2, 2, 2, 1)
+    return b.as_markup()
+
+
 def lobby_keyboard(lobby_id: str) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="✋ پایه‌ام", callback_data=f"gquiz:join:{lobby_id}")
     b.button(text="🚀 شروع بازی", callback_data=f"gquiz:start:{lobby_id}")
-    b.button(text="🚪 خروج از دوئل", callback_data=f"gquiz:leave:{lobby_id}")
+    b.button(text="🚪 خروج", callback_data=f"gquiz:leave:{lobby_id}")
     b.adjust(3)
+    return b.as_markup()
+
+
+def group_settings_keyboard(lobby: GroupLobby) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for sec in (10, 20, 30):
+        b.button(text=(f"☑️ {sec}s" if lobby.timer_seconds == sec else f"{sec}s"), callback_data=f"gqtime:{lobby.lobby_id}:{sec}")
+    for cnt in (5, 10, 15):
+        b.button(text=(f"☑️ {cnt}" if lobby.question_count == cnt else str(cnt)), callback_data=f"gqcount:{lobby.lobby_id}:{cnt}")
+    b.button(text="✋ پایه‌ام", callback_data=f"gquiz:join:{lobby.lobby_id}")
+    b.button(text="🚀 شروع بازی", callback_data=f"gquiz:start:{lobby.lobby_id}")
+    b.button(text="🚪 خروج", callback_data=f"gquiz:leave:{lobby.lobby_id}")
+    b.adjust(3, 3, 2, 1)
     return b.as_markup()
 
 
@@ -230,9 +261,16 @@ def answer_keyboard(lobby_id: str, q_index: int, q) -> InlineKeyboardMarkup:
 
 
 def lobby_text(lobby: GroupLobby, max_players: int) -> str:
+    if lobby.stage == "genre":
+        genres = "\n".join(("☑️ " if g in lobby.selected_genres else "⬜ ") + g for g in lobby.offered_genres[:8])
+        return f"🎮 بازی گروهی چالشینو\n\nمرحله اول: انتخاب ژانر\n\n{genres}"
     names = "\n".join(f"✅ {trim_name(n)}" for n in lobby.players.values())
     return (
         "🎮 بازی گروهی چالشینو\n\n"
+        "⚙️ تنظیمات بازی\n"
+        f"زمان پاسخ به هر سوال: {lobby.timer_seconds}s\n"
+        f"تعداد سوال: {lobby.question_count}\n"
+        f"ژانرها: {', '.join(lobby.selected_genres) if lobby.selected_genres else '-'}\n\n"
         f"👤 سازنده: {trim_name(lobby.players.get(lobby.starter_id, 'شروع‌کننده'))}\n"
         f"👥 شرکت‌کنندگان: {len(lobby.players)}/{max_players}\n\n"
         f"{names}"
@@ -271,9 +309,13 @@ async def group_quiz_start(message: Message, db: Database, bot: Bot) -> None:
     lobby = GroupLobby(lobby_id=lobby_id, starter_id=message.from_user.id, chat_id=message.chat.id)
     lobby.players[message.from_user.id] = message.from_user.full_name
     lobby.usernames[message.from_user.id] = message.from_user.username
+    genres = await db.all_genres()
+    lobby.offered_genres = random.sample(genres, min(8, len(genres))) if genres else []
+    lobby.question_count = await db.get_int("group_quiz_question_count", 5)
+    lobby.timer_seconds = await db.get_int("group_quiz_timer_seconds", 30)
     lobbies[lobby_id] = lobby
     max_players = await db.get_int("group_quiz_max_players", 8)
-    msg = await message.answer(lobby_text(lobby, max_players), reply_markup=lobby_keyboard(lobby_id))
+    msg = await message.answer(lobby_text(lobby, max_players), reply_markup=group_genre_keyboard(lobby))
     lobby.message_id = msg.message_id
     lobby.timeout_task = asyncio.create_task(lobby_timeout(lobby_id, message.bot))
 
@@ -325,10 +367,14 @@ async def chosen_result_handler(chosen: ChosenInlineResult, bot: Bot, db: Databa
         lobby = GroupLobby(lobby_id=lobby_id, starter_id=chosen.from_user.id, inline_message_id=chosen.inline_message_id)
         lobby.players[chosen.from_user.id] = chosen.from_user.full_name
         lobby.usernames[chosen.from_user.id] = chosen.from_user.username
+        genres = await db.all_genres()
+        lobby.offered_genres = random.sample(genres, min(8, len(genres))) if genres else []
+        lobby.question_count = await db.get_int("group_quiz_question_count", 5)
+        lobby.timer_seconds = await db.get_int("group_quiz_timer_seconds", 30)
         lobbies[lobby_id] = lobby
         lobby.timeout_task = asyncio.create_task(lobby_timeout(lobby_id, bot))
         try:
-            await edit_lobby(bot, lobby, lobby_text(lobby, await db.get_int("group_quiz_max_players", 8)), lobby_keyboard(lobby_id))
+            await edit_lobby(bot, lobby, lobby_text(lobby, await db.get_int("group_quiz_max_players", 8)), group_genre_keyboard(lobby))
         except Exception:
             logger.exception("Could not normalize inline quiz lobby")
     elif chosen.result_id == "group_duel":
@@ -371,7 +417,7 @@ async def close_or_update_group_lobby_after_leave(bot: Bot, lobby: GroupLobby, u
         return
     lobby.players.pop(user_id, None)
     lobby.usernames.pop(user_id, None)
-    await edit_lobby(bot, lobby, lobby_text(lobby, 8), lobby_keyboard(lobby.lobby_id))
+    await edit_lobby(bot, lobby, lobby_text(lobby, 8), group_settings_keyboard(lobby) if lobby.stage == "settings" else group_genre_keyboard(lobby))
 
 
 @router.callback_query(F.data == "group_quiz_leave")
@@ -401,6 +447,84 @@ async def group_quiz_leave(call: CallbackQuery, bot: Bot) -> None:
     await close_or_update_group_lobby_after_leave(bot, lobby, call.from_user.id)
 
 
+@router.callback_query(F.data.startswith("gqgenre:"))
+async def group_quiz_genre_select(call: CallbackQuery, db: Database, bot: Bot) -> None:
+    await call.answer()
+    try:
+        _, lobby_id, idx_s = call.data.split(":", 2)
+        lobby = lobbies.get(lobby_id)
+        if not lobby or lobby.started:
+            await call.answer("لابی پیدا نشد", show_alert=False)
+            return
+        if call.from_user.id != lobby.starter_id:
+            await call.answer("فقط سازنده ژانرهای بازی را انتخاب می‌کند", show_alert=False)
+            return
+        try:
+            genre = lobby.offered_genres[int(idx_s)]
+        except Exception:
+            await call.answer("ژانر نامعتبر است", show_alert=False)
+            return
+        if genre in lobby.selected_genres:
+            lobby.selected_genres.remove(genre)
+        elif len(lobby.selected_genres) < 2:
+            lobby.selected_genres.append(genre)
+        else:
+            await call.answer("دقیقاً 2 ژانر انتخاب کن", show_alert=False)
+            return
+        await edit_lobby(bot, lobby, lobby_text(lobby, await db.get_int("group_quiz_max_players", 8)), group_genre_keyboard(lobby))
+    except Exception:
+        logger.exception("Group quiz genre select failed")
+
+
+@router.callback_query(F.data.startswith("gqcontinue:"))
+async def group_quiz_continue_settings(call: CallbackQuery, db: Database, bot: Bot) -> None:
+    await call.answer()
+    try:
+        lobby_id = call.data.split(":", 1)[1]
+        lobby = lobbies.get(lobby_id)
+        if not lobby:
+            await call.answer("لابی پیدا نشد", show_alert=False)
+            return
+        if call.from_user.id != lobby.starter_id:
+            await call.answer("فقط سازنده می‌تواند ادامه دهد", show_alert=False)
+            return
+        if len(lobby.selected_genres) != 2:
+            await call.answer("اول 2 ژانر انتخاب کن", show_alert=False)
+            return
+        lobby.stage = "settings"
+        await edit_lobby(bot, lobby, lobby_text(lobby, await db.get_int("group_quiz_max_players", 8)), group_settings_keyboard(lobby))
+    except Exception:
+        logger.exception("Group quiz continue failed")
+
+
+@router.callback_query(F.data.startswith("gqtime:"))
+async def group_quiz_set_time(call: CallbackQuery, db: Database, bot: Bot) -> None:
+    await call.answer()
+    try:
+        _, lobby_id, sec_s = call.data.split(":")
+        lobby = lobbies.get(lobby_id)
+        if not lobby or call.from_user.id != lobby.starter_id:
+            return
+        lobby.timer_seconds = int(sec_s)
+        await edit_lobby(bot, lobby, lobby_text(lobby, await db.get_int("group_quiz_max_players", 8)), group_settings_keyboard(lobby))
+    except Exception:
+        logger.exception("Group quiz set time failed")
+
+
+@router.callback_query(F.data.startswith("gqcount:"))
+async def group_quiz_set_count(call: CallbackQuery, db: Database, bot: Bot) -> None:
+    await call.answer()
+    try:
+        _, lobby_id, cnt_s = call.data.split(":")
+        lobby = lobbies.get(lobby_id)
+        if not lobby or call.from_user.id != lobby.starter_id:
+            return
+        lobby.question_count = int(cnt_s)
+        await edit_lobby(bot, lobby, lobby_text(lobby, await db.get_int("group_quiz_max_players", 8)), group_settings_keyboard(lobby))
+    except Exception:
+        logger.exception("Group quiz set count failed")
+
+
 @router.callback_query(F.data == "group_quiz_start")
 async def inline_start_game(call: CallbackQuery, db: Database, bot: Bot) -> None:
     inline_id = call.inline_message_id
@@ -415,6 +539,9 @@ async def inline_start_game(call: CallbackQuery, db: Database, bot: Bot) -> None
         await call.answer("فقط کسی که بازی رو شروع کرده می‌تونه از این دکمه استفاده کنه", show_alert=False)
         return
     if not await require_registered_and_join(call, db, bot):
+        return
+    if lobby.stage != "settings":
+        await call.answer("اول ژانرها و تنظیمات بازی را کامل کن", show_alert=False)
         return
     if len(lobby.players) < 2:
         await call.answer("حداقل 2 نفر لازم است.", show_alert=False)
@@ -458,6 +585,9 @@ async def group_start_game(call: CallbackQuery, db: Database, bot: Bot) -> None:
         return
     if not await require_registered_and_join(call, db, bot):
         return
+    if lobby.stage != "settings":
+        await call.answer("اول ژانرها و تنظیمات بازی را کامل کن", show_alert=False)
+        return
     if len(lobby.players) < 2:
         await call.answer("حداقل 2 نفر لازم است.", show_alert=False)
         return
@@ -471,8 +601,12 @@ async def start_lobby_game(call: CallbackQuery, db: Database, bot: Bot, lobby: G
         if lobby.timeout_task and not lobby.timeout_task.done():
             lobby.timeout_task.cancel()
         await edit_lobby(bot, lobby, "⏳ بازی در حال شروع...", None)
-        count = await db.get_int("group_quiz_question_count", 5)
-        rows = await db.fetchall("SELECT * FROM questions WHERE status='active' ORDER BY RANDOM() LIMIT ?", (count,))
+        count = lobby.question_count
+        if lobby.selected_genres:
+            placeholders = ','.join('?' for _ in lobby.selected_genres)
+            rows = await db.fetchall(f"SELECT * FROM questions WHERE status='active' AND genre IN ({placeholders}) ORDER BY RANDOM() LIMIT ?", (*lobby.selected_genres, count))
+        else:
+            rows = await db.fetchall("SELECT * FROM questions WHERE status='active' ORDER BY RANDOM() LIMIT ?", (count,))
         if not rows:
             await edit_lobby(bot, lobby, "سوال فعالی برای بازی گروهی وجود ندارد.", None)
             return
@@ -493,7 +627,7 @@ async def send_group_question(bot: Bot, db: Database, game: GroupGame, idx: int)
     game.question_ended = False
     game.question_lock = asyncio.Lock()
     game.answered[idx] = {}
-    total_seconds = await db.get_int('group_quiz_timer_seconds', 30)
+    total_seconds = game.lobby.timer_seconds
     game.remaining[idx] = total_seconds
     text = group_question_text(game, idx, total_seconds, total_seconds)
     await edit_lobby(bot, game.lobby, text, answer_keyboard(game.lobby.lobby_id, idx, q))
@@ -523,8 +657,8 @@ async def group_answer(call: CallbackQuery, db: Database, bot: Bot) -> None:
     game.answered[idx][call.from_user.id] = opt
     total = len(game.lobby.players)
     q = game.questions[idx]
-    remaining = game.remaining.get(idx, await db.get_int('group_quiz_timer_seconds', 30))
-    total_seconds = await db.get_int('group_quiz_timer_seconds', 30)
+    remaining = game.remaining.get(idx, game.lobby.timer_seconds)
+    total_seconds = game.lobby.timer_seconds
     await edit_lobby(bot, game.lobby, group_question_text(game, idx, remaining, total_seconds), answer_keyboard(lobby_id, idx, q))
     if len(game.answered[idx]) >= total:
         task = game.timer_tasks.get(idx)
@@ -535,20 +669,7 @@ async def group_answer(call: CallbackQuery, db: Database, bot: Bot) -> None:
 
 async def group_question_timeout(bot: Bot, db: Database, game: GroupGame, idx: int, seconds: int) -> None:
     try:
-        step = 6
-        remaining = seconds
-        while remaining > 0:
-            await asyncio.sleep(min(step, remaining))
-            if idx in game.resolved or game.current_idx != idx or game.game_ended:
-                return
-            remaining = max(0, remaining - step)
-            game.remaining[idx] = remaining
-            # وقتی تایمر به صفر رسید، اول سوال را ببند؛ دیگر پیام 0s را به عنوان حالت زنده نگه ندار.
-            if remaining <= 0:
-                break
-            await edit_lobby(bot, game.lobby, group_question_text(game, idx, remaining, seconds), answer_keyboard(game.lobby.lobby_id, idx, game.questions[idx]))
-            if len(game.answered.get(idx, {})) >= len(game.lobby.players):
-                return
+        await asyncio.sleep(seconds)
         if idx not in game.resolved and game.current_idx == idx and not game.game_ended:
             await asyncio.shield(resolve_group_question(bot, db, game, idx))
     except asyncio.CancelledError:
@@ -580,7 +701,7 @@ async def resolve_group_question(bot: Bot, db: Database, game: GroupGame, idx: i
                 if ok:
                     game.scores[uid] = game.scores.get(uid, 0) + 1
             game.remaining[idx] = 0
-            text = group_question_text(game, idx, 0, await db.get_int('group_quiz_timer_seconds', 30), resolved=True)
+            text = group_question_text(game, idx, 0, game.lobby.timer_seconds, resolved=True)
             await edit_lobby(bot, game.lobby, text, None)
             await asyncio.sleep(2)
             if idx + 1 < len(game.questions):
@@ -766,7 +887,7 @@ def group_duel_question_text(game: GroupDuelGame, idx: int, remaining: int, tota
             ok = ans == int(q['correct_option'])
             lines.append(f"{trim_name(name)}: {'✅' if ok else '❌'}" + (f" (+1)" if ok else ""))
         return f"⚔️ دوئل | سوال {idx+1}/{len(game.questions)}\n━━━━━━━━━━━━━━\n{q['text']}\n✅ جواب درست: {opts[int(q['correct_option'])-1]}\n━━━━━━━━━━━━━━\n" + "\n".join(lines)
-    return f"⚔️ دوئل | سوال {idx+1}/{len(game.questions)}\n━━━━━━━━━━━━━━\n{q['text']}\n━━━━━━━━━━━━━━\n⏱️ {bar(remaining, total_seconds)} {remaining}s"
+    return f"⚔️ دوئل | سوال {idx+1}/{len(game.questions)}\n━━━━━━━━━━━━━━\n{q['text']}\n━━━━━━━━━━━━━━"
 
 
 async def start_group_duel(bot: Bot, db: Database, lobby: GroupLobby) -> None:
@@ -818,17 +939,12 @@ async def group_duel_answer(call: CallbackQuery, db: Database, bot: Bot) -> None
 
 
 async def group_duel_timeout(bot: Bot, db: Database, game: GroupDuelGame, idx: int, seconds: int) -> None:
-    step = 6
-    remaining = seconds
     try:
-        while remaining > 0:
-            await asyncio.sleep(min(step, remaining))
-            if idx in game.resolved or game.current_idx != idx:
-                return
-            remaining = max(0, remaining - step)
-            game.remaining[idx] = remaining
-            await edit_lobby(bot, game.lobby, group_duel_question_text(game, idx, remaining, seconds), duel_answer_keyboard(game.lobby.lobby_id, idx, game.questions[idx]))
-        await resolve_group_duel_question(bot, db, game, idx)
+        await asyncio.sleep(seconds)
+        if idx not in game.resolved and game.current_idx == idx:
+            await resolve_group_duel_question(bot, db, game, idx)
+    except asyncio.CancelledError:
+        return
     except Exception:
         logger.exception("Group duel timeout failed")
 

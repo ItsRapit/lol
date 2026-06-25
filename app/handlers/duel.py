@@ -25,7 +25,6 @@ class DuelRuntime:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     question_started_at: float = 0.0
     timeout_task: asyncio.Task | None = None
-    visual_tasks: dict[tuple[int, int], asyncio.Task] = field(default_factory=dict)
 
 
 runtimes: dict[int, DuelRuntime] = {}
@@ -40,45 +39,11 @@ genre_timeout_tasks: dict[tuple[int, int], asyncio.Task] = {}
 unanswered_streaks: dict[tuple[int, int], int] = {}
 
 
-def progress_bar(remaining: int, total: int) -> str:
-    if total <= 0:
-        filled = 0
-    else:
-        filled = max(0, min(10, round((remaining / total) * 10)))
-    return "█" * filled + "░" * (10 - filled)
-
-
 async def safe_edit_reply_markup(message, reply_markup) -> None:
     try:
         await message.edit_reply_markup(reply_markup=reply_markup)
     except Exception:
         logger.exception("Safe edit reply markup failed")
-
-
-async def visual_timer_task(bot: Bot, db: Database, chat_id: int, message_id: int, base_text: str, total: int, interval: int, duel_id: int, qid: int, options: list[str]) -> None:
-    try:
-        for remaining in range(max(0, total - interval), -1, -interval):
-            await asyncio.sleep(interval)
-            try:
-                if await db.has_answered(duel_id, qid, chat_id):
-                    return
-                costs = await db.powerup_costs_for_user(duel_id, chat_id)
-                hidden = hidden_options_temp.get((duel_id, chat_id, qid), set())
-                remove_cost = 0 if await db.has_powerup(duel_id, qid, chat_id, 'remove2') else costs['remove2']
-                second_cost = 0 if await db.has_powerup(duel_id, qid, chat_id, 'second') else costs['second']
-                markup = question_keyboard(duel_id, qid, options, hidden, cost_remove2=remove_cost, cost_second=second_cost)
-                await bot.edit_message_text(
-                    f"{base_text}\n\n⏱ [{progress_bar(remaining, total)}] {remaining}s",
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    reply_markup=markup,
-                )
-            except Exception:
-                logger.debug("Visual timer edit skipped", exc_info=True)
-    except asyncio.CancelledError:
-        return
-    except Exception:
-        logger.exception("Visual timer task failed")
 
 
 def runtime(duel_id: int) -> DuelRuntime:
@@ -94,8 +59,8 @@ async def duel_entry(message: Message, db: Database) -> None:
         return
     random_cost = await db.get_int('random_duel_cost', 5)
     friendly_cost = await db.get_int('friendly_duel_cost', 20)
-    await message.answer("دوئل:", reply_markup=ReplyKeyboardRemove())
-    await message.answer("نوع دوئل را انتخاب کن:", reply_markup=duel_menu(random_cost, friendly_cost))
+    await message.answer("⚔️ دوئل", reply_markup=ReplyKeyboardRemove())
+    await message.answer("یکی را انتخاب کن:", reply_markup=duel_menu(random_cost, friendly_cost))
 
 
 @router.callback_query(F.data == "duel:random")
@@ -377,22 +342,13 @@ async def send_current_question(duel_id: int, db: Database, bot: Bot) -> None:
             return
         timer = await db.get_int('question_timer_seconds', 15)
         rt.question_started_at = time.monotonic()
-        base_text = f"سوال {seq + 1}\nID: <code>{q['id']}</code>\n\n{q['text']}"
-        text = f"{base_text}\n\n⏱ [{progress_bar(timer, timer)}] {timer}s"
-        for t in rt.visual_tasks.values():
-            if not t.done():
-                t.cancel()
-        rt.visual_tasks.clear()
-        visual_enabled = await db.get_int('visual_timer_enabled', 1)
-        interval = await db.get_int('visual_timer_interval_seconds', 6)
+        text = f"سوال {seq + 1}\nID: <code>{q['id']}</code>\n\n{q['text']}"
         for uid in [duel['player1_id'], duel['player2_id']]:
             costs = await db.powerup_costs_for_user(duel_id, uid)
             markup = question_keyboard(duel_id, q['id'], options_from_question(q), cost_remove2=costs['remove2'], cost_second=costs['second'])
             msg = await bot.send_message(uid, text, reply_markup=markup)
             question_message_ids[(duel_id, uid, q['id'])] = msg.message_id
-            if visual_enabled:
-                rt.visual_tasks[(uid, q['id'])] = asyncio.create_task(visual_timer_task(bot, db, uid, msg.message_id, base_text, timer, interval, duel_id, q['id'], options_from_question(q)))
-        if rt.timeout_task and not rt.timeout_task.done(): 
+        if rt.timeout_task and not rt.timeout_task.done():
             rt.timeout_task.cancel()
         rt.timeout_task = asyncio.create_task(timeout_question(duel_id, q['id'], timer, db, bot))
 
@@ -436,9 +392,6 @@ async def forfeit_inactive_duel(duel_id: int, inactive_users: list[int], db: Dat
         if rt:
             if rt.timeout_task and not rt.timeout_task.done():
                 rt.timeout_task.cancel()
-            for task in rt.visual_tasks.values():
-                if not task.done():
-                    task.cancel()
     except Exception:
         logger.exception("Forfeit inactive duel failed")
 
@@ -463,11 +416,6 @@ async def timeout_question(duel_id: int, qid: int, seconds: int, db: Database, b
             inactive_users = [uid for uid in [duel['player1_id'], duel['player2_id']] if unanswered_streaks.get((duel_id, uid), 0) >= 3]
             await forfeit_inactive_duel(duel_id, inactive_users, db, bot)
             return
-        rt = runtime(duel_id)
-        for t in rt.visual_tasks.values():
-            if not t.done():
-                t.cancel()
-        rt.visual_tasks.clear()
         await advance_duel(duel_id, db, bot, qid)
     except asyncio.CancelledError:
         return
@@ -492,9 +440,6 @@ async def answer_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
         explanation = f"\n\n{q['explanation']}" if 'explanation' in q.keys() and q['explanation'] else ""
         if opt != q['correct_option'] and pending_key not in second_chance_pending and second_chance_question.get((duel_id, call.from_user.id)) == qid:
             second_chance_pending.add(pending_key)
-            user_timer = rt.visual_tasks.pop((call.from_user.id, qid), None)
-            if user_timer and not user_timer.done():
-                user_timer.cancel()
             hidden_options_temp[pending_key] = set(hidden_options_temp.get(pending_key, set())) | {opt}
             costs = await db.powerup_costs_for_user(duel_id, call.from_user.id)
             retry_text = f"سوال {duel['current_index'] + 1}\nID: <code>{qid}</code>\n\n{q['text']}\n\n❌ این گزینه اشتباه بود!\n🔄 یک فرصت دیگه داری — دوباره انتخاب کن:"
@@ -513,9 +458,6 @@ async def answer_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
             return
         unanswered_streaks[(duel_id, call.from_user.id)] = 0
         second_chance_pending.discard(pending_key)
-        user_timer = rt.visual_tasks.pop((call.from_user.id, qid), None)
-        if user_timer and not user_timer.done():
-            user_timer.cancel()
         base_result_text = f"سوال {duel['current_index'] + 1}\nID: <code>{qid}</code>\n\n{q['text']}"
         if opt == q['correct_option']:
             bonus = 0
@@ -540,10 +482,6 @@ async def answer_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
         await call.answer()
         if await db.answered_count_for_question(duel_id, qid) >= 2:
             rt.timeout_task.cancel() if rt.timeout_task and not rt.timeout_task.done() else None
-            for t in rt.visual_tasks.values():
-                if not t.done():
-                    t.cancel()
-            rt.visual_tasks.clear()
             await asyncio.sleep(1.5)
             await advance_duel(duel_id, db, bot, qid)
     except Exception:
