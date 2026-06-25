@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import secrets
 from dataclasses import dataclass, field
 from aiogram import Bot, Router, F
 from aiogram.filters import Command
@@ -68,6 +69,7 @@ games: dict[str, GroupGame] = {}
 group_duels: dict[str, GroupDuelGame] = {}
 group_duel_genres: dict[str, dict[int, str]] = {}
 group_duel_offers: dict[str, list[str]] = {}
+inline_group_pending: dict[str, dict] = {}
 
 
 def trim_name(name: str, max_len: int = 20) -> str:
@@ -216,6 +218,49 @@ async def lobby_timeout(lobby_id: str, bot: Bot) -> None:
         logger.exception("Lobby timeout failed")
 
 
+def inline_group_genre_text(data: dict) -> str:
+    selected = set(data.get("selected", []))
+    lines = []
+    for g in data.get("genres", [])[:8]:
+        lines.append(("☑️ " if g in selected else "⬜ ") + g)
+    return "🎮 بازی گروهی چالشینو\n\nمرحله اول: انتخاب ژانر\n\n" + "\n".join(lines)
+
+
+def inline_group_genre_keyboard(token: str) -> InlineKeyboardMarkup:
+    data = inline_group_pending.get(token, {})
+    selected = set(data.get("selected", []))
+    b = InlineKeyboardBuilder()
+    for idx, genre in enumerate(data.get("genres", [])[:8]):
+        b.button(text=("☑️ " if genre in selected else "⬜ ") + genre, callback_data=f"gqgenrei:{token}:{idx}")
+    if len(selected) == 2:
+        b.button(text="ادامه", callback_data=f"gqcontinuei:{token}")
+    else:
+        b.button(text="ادامه (2 ژانر انتخاب کن)", callback_data="noop")
+    b.adjust(2, 2, 2, 2, 1)
+    return b.as_markup()
+
+
+async def ensure_inline_group_lobby(token: str, inline_message_id: str | None) -> GroupLobby | None:
+    if not inline_message_id:
+        return None
+    existing = next((l for l in lobbies.values() if l.inline_message_id == inline_message_id and l.lobby_id.startswith("inline_")), None)
+    if existing:
+        return existing
+    data = inline_group_pending.get(token)
+    if not data:
+        return None
+    lobby_id = f"inline_{abs(hash(inline_message_id))}"
+    lobby = GroupLobby(lobby_id=lobby_id, starter_id=data["starter_id"], inline_message_id=inline_message_id)
+    lobby.players[data["starter_id"]] = data["name"]
+    lobby.usernames[data["starter_id"]] = data.get("username")
+    lobby.offered_genres = list(data.get("genres", []))
+    lobby.selected_genres = list(data.get("selected", []))
+    lobby.question_count = int(data.get("question_count", 5))
+    lobby.timer_seconds = int(data.get("timer_seconds", 30))
+    lobbies[lobby_id] = lobby
+    return lobby
+
+
 def group_genre_keyboard(lobby: GroupLobby) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     selected = set(lobby.selected_genres)
@@ -325,14 +370,25 @@ async def inline_handler(query: InlineQuery, db: Database) -> None:
     try:
         name = trim_name(query.from_user.first_name or "بازیکن")
         max_players = await db.get_int("group_quiz_max_players", 8)
+        genres = await db.all_genres()
+        token = secrets.token_urlsafe(6)
+        inline_group_pending[token] = {
+            "starter_id": query.from_user.id,
+            "name": query.from_user.full_name,
+            "username": query.from_user.username,
+            "genres": random.sample(genres, min(8, len(genres))) if genres else [],
+            "selected": [],
+            "question_count": await db.get_int("group_quiz_question_count", 5),
+            "timer_seconds": await db.get_int("group_quiz_timer_seconds", 30),
+            "max_players": max_players,
+        }
         result = InlineQueryResultArticle(
-        id="group_quiz",
-        title="🎮 بازی گروهی",
-        description="همه با هم یه سوال می‌بینن، هر جواب درست = یه امتیاز، هرکی آخر بازی امتیاز بیشتری داشت برنده‌ست",
-        input_message_content=InputTextMessageContent(
-            message_text=f"🎮 بازی گروهی چالشینو\n\n⏳ لابی در حال آماده‌سازی..."
-        ),
-    )
+            id=f"group_quiz:{token}",
+            title="🎮 بازی گروهی",
+            description="همه با هم یه سوال می‌بینن، هر جواب درست = یه امتیاز، هرکی آخر بازی امتیاز بیشتری داشت برنده‌ست",
+            input_message_content=InputTextMessageContent(message_text=inline_group_genre_text(inline_group_pending[token])),
+            reply_markup=inline_group_genre_keyboard(token),
+        )
         duel_result = InlineQueryResultArticle(
             id="group_duel",
             title="⚔️ دوئل",
@@ -357,21 +413,15 @@ async def inline_handler(query: InlineQuery, db: Database) -> None:
 async def chosen_result_handler(chosen: ChosenInlineResult, bot: Bot, db: Database) -> None:
     if not chosen.inline_message_id:
         return
-    if chosen.result_id == "group_quiz":
-        lobby_id = f"inline_{abs(hash(chosen.inline_message_id))}"
-        lobby = GroupLobby(lobby_id=lobby_id, starter_id=chosen.from_user.id, inline_message_id=chosen.inline_message_id)
-        lobby.players[chosen.from_user.id] = chosen.from_user.full_name
-        lobby.usernames[chosen.from_user.id] = chosen.from_user.username
-        genres = await db.all_genres()
-        lobby.offered_genres = random.sample(genres, min(8, len(genres))) if genres else []
-        lobby.question_count = await db.get_int("group_quiz_question_count", 5)
-        lobby.timer_seconds = await db.get_int("group_quiz_timer_seconds", 30)
-        lobbies[lobby_id] = lobby
-        lobby.timeout_task = asyncio.create_task(lobby_timeout(lobby_id, bot))
-        try:
-            await edit_lobby(bot, lobby, lobby_text(lobby, await db.get_int("group_quiz_max_players", 8)), group_genre_keyboard(lobby))
-        except Exception:
-            logger.exception("Could not normalize inline quiz lobby")
+    if chosen.result_id.startswith("group_quiz"):
+        token = chosen.result_id.split(":", 1)[1] if ":" in chosen.result_id else ""
+        lobby = await ensure_inline_group_lobby(token, chosen.inline_message_id)
+        if lobby:
+            lobby.timeout_task = asyncio.create_task(lobby_timeout(lobby.lobby_id, bot))
+            try:
+                await edit_lobby(bot, lobby, lobby_text(lobby, await db.get_int("group_quiz_max_players", 8)), group_genre_keyboard(lobby))
+            except Exception:
+                logger.exception("Could not normalize inline quiz lobby")
     elif chosen.result_id == "group_duel":
         # Minimal inline-duel state stored as a lobby with only challenger.
         lobby_id = f"gduel_{abs(hash(chosen.inline_message_id))}"
@@ -518,6 +568,60 @@ async def group_quiz_set_count(call: CallbackQuery, db: Database, bot: Bot) -> N
         await edit_lobby(bot, lobby, lobby_text(lobby, await db.get_int("group_quiz_max_players", 8)), group_settings_keyboard(lobby))
     except Exception:
         logger.exception("Group quiz set count failed")
+
+
+@router.callback_query(F.data.startswith("gqgenrei:"))
+async def inline_group_quiz_genre_select(call: CallbackQuery, db: Database, bot: Bot) -> None:
+    await call.answer()
+    try:
+        _, token, idx_s = call.data.split(":", 2)
+        lobby = await ensure_inline_group_lobby(token, call.inline_message_id)
+        data = inline_group_pending.get(token)
+        if not lobby or not data:
+            await call.answer("لابی پیدا نشد. دوباره بازی را بساز.", show_alert=False)
+            return
+        if call.from_user.id != lobby.starter_id:
+            await call.answer("فقط سازنده ژانرهای بازی را انتخاب می‌کند", show_alert=False)
+            return
+        try:
+            genre = data["genres"][int(idx_s)]
+        except Exception:
+            await call.answer("ژانر نامعتبر است", show_alert=False)
+            return
+        if genre in data["selected"]:
+            data["selected"].remove(genre)
+        elif len(data["selected"]) < 2:
+            data["selected"].append(genre)
+        else:
+            await call.answer("دقیقاً 2 ژانر انتخاب کن", show_alert=False)
+            return
+        lobby.selected_genres = list(data["selected"])
+        await edit_lobby(bot, lobby, inline_group_genre_text(data), inline_group_genre_keyboard(token))
+    except Exception:
+        logger.exception("Inline group genre select failed")
+
+
+@router.callback_query(F.data.startswith("gqcontinuei:"))
+async def inline_group_quiz_continue_settings(call: CallbackQuery, db: Database, bot: Bot) -> None:
+    await call.answer()
+    try:
+        token = call.data.split(":", 1)[1]
+        lobby = await ensure_inline_group_lobby(token, call.inline_message_id)
+        data = inline_group_pending.get(token)
+        if not lobby or not data:
+            await call.answer("لابی پیدا نشد", show_alert=False)
+            return
+        if call.from_user.id != lobby.starter_id:
+            await call.answer("فقط سازنده می‌تواند ادامه دهد", show_alert=False)
+            return
+        if len(data.get("selected", [])) != 2:
+            await call.answer("اول 2 ژانر انتخاب کن", show_alert=False)
+            return
+        lobby.selected_genres = list(data["selected"])
+        lobby.stage = "settings"
+        await edit_lobby(bot, lobby, lobby_text(lobby, await db.get_int("group_quiz_max_players", 8)), group_settings_keyboard(lobby))
+    except Exception:
+        logger.exception("Inline group continue failed")
 
 
 @router.callback_query(F.data == "group_quiz_start")
