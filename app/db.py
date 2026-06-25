@@ -1092,33 +1092,48 @@ class Database:
         if not user:
             return None
         league = await self.get_user_league(int(user['cups']))
+
+        since: str | None = None
+        if period == "daily":
+            since = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
+        elif period == "monthly":
+            since = (datetime.now(UTC) - timedelta(days=30)).isoformat(timespec="seconds")
+
+        if since:
+            if basis == "league":
+                rows = await self.fetchall("""SELECT u.telegram_id,u.level,u.xp,u.cups,
+                                           COALESCE(SUM(c.amount),0) score
+                                           FROM users u LEFT JOIN cup_events c ON c.user_id=u.telegram_id AND c.created_at>=?
+                                           GROUP BY u.telegram_id""", (since,))
+                ordered = sorted(rows, key=lambda r: (-int(r['score'] or 0), -int(r['cups'] or 0), -int(r['level'] or 0), int(r['telegram_id'])))
+                for idx, r in enumerate(ordered, 1):
+                    if int(r['telegram_id']) == int(tg_id):
+                        return {'rank': idx, 'level': int(user['level']), 'xp': int(user['xp']), 'cups': int(r['score'] or 0), 'league_name': league['name'] if league else 'بدون لیگ'}
+            else:
+                rows = await self.fetchall("""SELECT u.telegram_id,u.level,u.xp,u.cups,
+                                           COALESCE(SUM(x.amount),0) score
+                                           FROM users u LEFT JOIN xp_events x ON x.user_id=u.telegram_id AND x.created_at>=?
+                                           GROUP BY u.telegram_id""", (since,))
+                ordered = sorted(rows, key=lambda r: (-int(r['score'] or 0), -int(r['level'] or 0), -int(r['xp'] or 0), int(r['telegram_id'])))
+                for idx, r in enumerate(ordered, 1):
+                    if int(r['telegram_id']) == int(tg_id):
+                        return {'rank': idx, 'level': int(user['level']), 'xp': int(r['score'] or 0), 'cups': int(user['cups']), 'league_name': league['name'] if league else 'بدون لیگ'}
+            return None
+
         if basis == "league":
-            # Same all-time ordering used by leaderboard league: cups desc, level desc.
             row = await self.fetchone(
                 "SELECT COUNT(*) c FROM users WHERE cups>? OR (cups=? AND level>? ) OR (cups=? AND level=? AND telegram_id<?)",
                 (user['cups'], user['cups'], user['level'], user['cups'], user['level'], tg_id),
             )
             rank = int(row['c'] if row else 0) + 1
-            return {
-                'rank': rank,
-                'level': int(user['level']),
-                'xp': int(user['xp']),
-                'cups': int(user['cups']),
-                'league_name': league['name'] if league else 'بدون لیگ',
-            }
-        # Same all-time ordering used by leaderboard XP: level desc, xp desc.
+            return {'rank': rank, 'level': int(user['level']), 'xp': int(user['xp']), 'cups': int(user['cups']), 'league_name': league['name'] if league else 'بدون لیگ'}
+
         row = await self.fetchone(
             "SELECT COUNT(*) c FROM users WHERE level>? OR (level=? AND xp>?) OR (level=? AND xp=? AND telegram_id<?)",
             (user['level'], user['level'], user['xp'], user['level'], user['xp'], tg_id),
         )
         rank = int(row['c'] if row else 0) + 1
-        return {
-            'rank': rank,
-            'level': int(user['level']),
-            'xp': int(user['xp']),
-            'cups': int(user['cups']),
-            'league_name': league['name'] if league else 'بدون لیگ',
-        }
+        return {'rank': rank, 'level': int(user['level']), 'xp': int(user['xp']), 'cups': int(user['cups']), 'league_name': league['name'] if league else 'بدون لیگ'}
 
     async def create_shop_tx(self, user_id: int, package_id: int) -> int:
         pkg = await self.get_package(package_id)

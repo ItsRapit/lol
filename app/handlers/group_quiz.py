@@ -330,13 +330,8 @@ async def inline_handler(query: InlineQuery, db: Database) -> None:
         title="🎮 بازی گروهی",
         description="همه با هم یه سوال می‌بینن، هر جواب درست = یه امتیاز، هرکی آخر بازی امتیاز بیشتری داشت برنده‌ست",
         input_message_content=InputTextMessageContent(
-            message_text=f"🎮 بازی گروهی چالشینو\n\n👤 سازنده: {name}\n👥 شرکت‌کنندگان: 1/{max_players}\n\n✅ {name}"
+            message_text=f"🎮 بازی گروهی چالشینو\n\n⏳ لابی در حال آماده‌سازی..."
         ),
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="✋ پایه‌ام", callback_data="group_quiz_join"),
-            InlineKeyboardButton(text="🚀 شروع بازی", callback_data="group_quiz_start"),
-            InlineKeyboardButton(text="🚪 خروج از دوئل", callback_data="group_quiz_leave"),
-        ]]),
     )
         duel_result = InlineQueryResultArticle(
             id="group_duel",

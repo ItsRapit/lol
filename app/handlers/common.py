@@ -187,7 +187,8 @@ async def leaderboard_callback(call: CallbackQuery, db: Database) -> None:
                 raw_name = r['first_name'] or (('@' + r['username']) if r['username'] else str(r['telegram_id']))
                 name = raw_name if len(raw_name) <= 20 else raw_name[:20] + "..."
                 prefix = medals[i - 1] if i <= 3 else f"#{i}"
-                text += f"{prefix} {name} — {league_with_emoji(r['league_name'])} — 🏆 {r['cups']}\n"
+                cups_value = int(r['score'] if period != 'all' else r['cups'])
+                text += rtl_line(f"{prefix} \u2068{name}\u2069 — {league_with_emoji(r['league_name'])} — 🏆 {cups_value}") + "\n"
             me = await db.leaderboard_user_position(call.from_user.id, basis, period)
             if me:
                 text += (
@@ -206,8 +207,8 @@ async def leaderboard_callback(call: CallbackQuery, db: Database) -> None:
                 raw_name = r['first_name'] or (('@' + r['username']) if r['username'] else str(r['telegram_id']))
                 name = raw_name if len(raw_name) <= 20 else raw_name[:20] + "..."
                 prefix = medals[i - 1] if i <= 3 else f"#{i}"
-                xp_value = int(r['xp'] if 'xp' in r.keys() else r['score'])
-                text += f"{prefix} {name} — Level {r['level']} — XP {xp_value:,}\n"
+                xp_value = int(r['score'] if period != 'all' else (r['xp'] if 'xp' in r.keys() else r['score']))
+                text += rtl_line(f"{prefix} \u2068{name}\u2069 — Level {r['level']} — XP {xp_value:,}") + "\n"
             me = await db.leaderboard_user_position(call.from_user.id, basis, period)
             if me:
                 text += (
