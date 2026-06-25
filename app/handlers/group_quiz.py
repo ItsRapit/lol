@@ -544,12 +544,16 @@ async def group_quiz_continue_settings(call: CallbackQuery, db: Database, bot: B
 
 @router.callback_query(F.data.startswith("gqtime:"))
 async def group_quiz_set_time(call: CallbackQuery, db: Database, bot: Bot) -> None:
-    await call.answer()
     try:
         _, lobby_id, sec_s = call.data.split(":")
         lobby = lobbies.get(lobby_id)
-        if not lobby or call.from_user.id != lobby.starter_id:
+        if not lobby:
+            await call.answer("لابی پیدا نشد", show_alert=False)
             return
+        if call.from_user.id != lobby.starter_id:
+            await call.answer("فقط سازنده بازی می‌تواند این گزینه را تغییر دهد", show_alert=False)
+            return
+        await call.answer()
         lobby.timer_seconds = int(sec_s)
         await edit_lobby(bot, lobby, lobby_text(lobby, await db.get_int("group_quiz_max_players", 8)), group_settings_keyboard(lobby))
     except Exception:
@@ -558,12 +562,16 @@ async def group_quiz_set_time(call: CallbackQuery, db: Database, bot: Bot) -> No
 
 @router.callback_query(F.data.startswith("gqcount:"))
 async def group_quiz_set_count(call: CallbackQuery, db: Database, bot: Bot) -> None:
-    await call.answer()
     try:
         _, lobby_id, cnt_s = call.data.split(":")
         lobby = lobbies.get(lobby_id)
-        if not lobby or call.from_user.id != lobby.starter_id:
+        if not lobby:
+            await call.answer("لابی پیدا نشد", show_alert=False)
             return
+        if call.from_user.id != lobby.starter_id:
+            await call.answer("فقط سازنده بازی می‌تواند این گزینه را تغییر دهد", show_alert=False)
+            return
+        await call.answer()
         lobby.question_count = int(cnt_s)
         await edit_lobby(bot, lobby, lobby_text(lobby, await db.get_int("group_quiz_max_players", 8)), group_settings_keyboard(lobby))
     except Exception:
@@ -669,7 +677,8 @@ async def join_lobby(call: CallbackQuery, db: Database, bot: Bot, lobby: GroupLo
         return
     lobby.players[call.from_user.id] = call.from_user.full_name
     lobby.usernames[call.from_user.id] = call.from_user.username
-    await edit_lobby(bot, lobby, lobby_text(lobby, max_players), lobby_keyboard(lobby.lobby_id))
+    keyboard = group_settings_keyboard(lobby) if lobby.stage == "settings" else group_genre_keyboard(lobby)
+    await edit_lobby(bot, lobby, lobby_text(lobby, max_players), keyboard)
 
 
 @router.callback_query(F.data.startswith("gquiz:start:"))
