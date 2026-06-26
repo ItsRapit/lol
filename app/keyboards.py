@@ -66,8 +66,7 @@ def question_keyboard(duel_id: int, qid: int, options: list[str], hidden: set[in
             b.button(text=f"{i}. {opt}", callback_data=f"ans:{duel_id}:{qid}:{i}")
     auto_text = "🎯 جواب خودکار — ❌" if cost_auto < 0 else f"🎯 جواب خودکار — {cost_auto}🪙"
     b.button(text=auto_text, callback_data="noop" if cost_auto < 0 else f"power:auto:{duel_id}:{qid}")
-    b.button(text="⚠️ گزارش مشکل سوال", callback_data=f"issue_report:{duel_id}:{qid}")
-    b.adjust(1, 1, 1, 1, 1, 1)
+    b.adjust(2, 2, 1)
     return b.as_markup()
 
 

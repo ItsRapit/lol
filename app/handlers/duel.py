@@ -10,7 +10,7 @@ from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
 
 from app.db import Database, now_iso
-from app.keyboards import duel_menu, genres_keyboard, question_keyboard, main_menu, waiting_queue_keyboard, issue_report_reasons_keyboard, report_admin_keyboard, result_report_keyboard, duel_finished_keyboard, rematch_keyboard
+from app.keyboards import duel_menu, genres_keyboard, question_keyboard, main_menu, waiting_queue_keyboard, issue_report_reasons_keyboard, report_admin_keyboard, result_report_keyboard, duel_finished_keyboard, rematch_keyboard, group_report_questions_keyboard
 from app.utils import invite_token, options_from_question
 from app.states import ReportQuestion
 from app.notifications import send_duel_transition_notifications, send_streak_notification
@@ -455,12 +455,25 @@ async def answer_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
         unanswered_streaks[(duel_id, call.from_user.id)] = 0
         second_chance_pending.discard(pending_key)
         base_result_text = f"سوال {duel['current_index'] + 1}\nID: <code>{qid}</code>\n\n{q['text']}"
-        result_text = f"{base_result_text}\n\n✅ پاورآپ جواب خودکار فعال شد.\nجواب درست: {options_from_question(q)[correct_option - 1]} ✅"
+        if opt == int(q['correct_option']):
+            bonus = 0
+            if ms <= 5000:
+                bonus = await db.get_int('fast_bonus_xp_0_5', 5)
+            elif ms <= 10000:
+                bonus = await db.get_int('fast_bonus_xp_5_10', 2)
+            if bonus:
+                await db.change_xp(call.from_user.id, bonus, 'fast_answer_bonus', duel_id)
+            msg = "✅ درست"
+            if bonus:
+                msg += f" ⚡ پاسخ سریع: +{bonus} ایکس‌پی"
+        else:
+            msg = f"❌ اشتباه\nجواب درست: {correct_text} ✅{explanation}"
+        result_text = f"{base_result_text}\n\n{msg}"
         try:
-            await call.message.edit_text(result_text, reply_markup=result_report_keyboard(duel_id, qid))
+            await call.message.edit_text(result_text)
         except Exception:
             logger.exception("Could not edit answered question message; sending fallback")
-            await call.message.answer(result_text, reply_markup=result_report_keyboard(duel_id, qid))
+            await call.message.answer(result_text)
         await call.answer()
         if await db.answered_count_for_question(duel_id, qid) >= 2:
             rt.timeout_task.cancel() if rt.timeout_task and not rt.timeout_task.done() else None
@@ -605,9 +618,9 @@ async def powerup_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
         base_result_text = f"سوال {duel['current_index'] + 1}\nID: <code>{qid}</code>\n\n{q['text']}"
         result_text = f"{base_result_text}\n\n✅ پاورآپ جواب خودکار فعال شد.\nجواب درست: {options_from_question(q)[correct_option - 1]} ✅"
         try:
-            await call.message.edit_text(result_text, reply_markup=result_report_keyboard(duel_id, qid))
+            await call.message.edit_text(result_text)
         except Exception:
-            await call.message.answer(result_text, reply_markup=result_report_keyboard(duel_id, qid))
+            await call.message.answer(result_text)
         if await db.answered_count_for_question(duel_id, qid) >= 2:
             rt.timeout_task.cancel() if rt.timeout_task and not rt.timeout_task.done() else None
             await asyncio.sleep(1.0)
@@ -725,7 +738,8 @@ async def duel_report_answers_callback(call: CallbackQuery, db: Database) -> Non
                 f"✅ جواب صحیح: {opts[correct_idx-1]}\n"
                 f"{mark} پاسخ شما: {selected_text}"
             )
-        await call.message.answer("\n".join(lines))
+        lines.append("\nبرای گزارش مشکل، شماره سوال را انتخاب کن.")
+        await call.message.answer("\n".join(lines), reply_markup=group_report_questions_keyboard(str(duel_id), len(rows), "duelr"))
     except Exception:
         logger.exception("Duel report answers failed")
         await call.message.answer("خطا در نمایش گزارش و جواب‌ها.")
@@ -820,3 +834,30 @@ async def rematch_accept_callback(call: CallbackQuery, db: Database, bot: Bot) -
     except Exception:
         logger.exception("Rematch accept failed")
         await call.message.answer("خطا در قبول بازی مجدد.")
+
+
+@router.callback_query(F.data.startswith("duelr:q:"))
+async def duel_report_select_question(call: CallbackQuery, db: Database) -> None:
+    await call.answer()
+    try:
+        _, _, duel_s, idx_s = call.data.split(":", 3)
+        duel_id = int(duel_s)
+        idx = int(idx_s)
+        rows = await db.fetchall("SELECT question_id FROM duel_questions WHERE duel_id=? ORDER BY seq", (duel_id,))
+        if idx < 0 or idx >= len(rows):
+            await call.answer("شماره سوال نامعتبر است", show_alert=True)
+            return
+        qid = int(rows[idx]['question_id'])
+        await call.message.answer("دلیل گزارش را انتخاب کن:", reply_markup=issue_report_reasons_keyboard(duel_id, qid))
+    except Exception:
+        logger.exception("Duel report select question failed")
+        await call.message.answer("خطا در انتخاب سوال برای گزارش.")
+
+
+@router.callback_query(F.data.startswith("duelr:cancel:"))
+async def duel_report_cancel(call: CallbackQuery) -> None:
+    await call.answer()
+    try:
+        await call.message.edit_text("گزارش شما لغو شد")
+    except Exception:
+        logger.exception("Duel report cancel failed")
