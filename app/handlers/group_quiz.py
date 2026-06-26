@@ -12,8 +12,9 @@ from aiogram.types import (
     InlineQuery, InlineQueryResultArticle, InputTextMessageContent, ChosenInlineResult,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from app.db import Database
-from app.keyboards import group_duel_lobby_keyboard
+from app.db import Database, now_iso
+from app.time_utils import jalali_datetime
+from app.keyboards import group_duel_lobby_keyboard, group_finished_keyboard, group_report_questions_keyboard, report_admin_keyboard, group_finished_keyboard, group_report_questions_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -70,6 +71,8 @@ group_duels: dict[str, GroupDuelGame] = {}
 group_duel_genres: dict[str, dict[int, str]] = {}
 group_duel_offers: dict[str, list[str]] = {}
 inline_group_pending: dict[str, dict] = {}
+completed_group_games: dict[str, GroupGame] = {}
+completed_group_duels: dict[str, GroupDuelGame] = {}
 
 
 def trim_name(name: str, max_len: int = 20) -> str:
@@ -147,6 +150,7 @@ async def ensure_user_started_callback(call: CallbackQuery, db: Database) -> boo
         await call.answer(
             text="چالشینو\n\nابتدا ربات را استارت کنید 👇\n@ChalleshinoBot",
             show_alert=True,
+            url="https://t.me/ChalleshinoBot?start=from_group_game",
         )
         return False
     return True
@@ -207,9 +211,9 @@ async def lobby_timeout(lobby_id: str, bot: Bot) -> None:
         lobbies.pop(lobby_id, None)
         try:
             if lobby.inline_message_id:
-                await bot.edit_message_text("⏰ لابی بازی به دلیل عدم شروع در 10 دقیقه بسته شد.", inline_message_id=lobby.inline_message_id, reply_markup=None)
+                await bot.edit_message_text("⏰ لابی بازی به دلیل عدم شروع در 10 دقیقه بسته شد.", inline_message_id=lobby.inline_message_id, reply_markup=group_finished_keyboard(lobby_id, "gqreport"))
             elif lobby.chat_id and lobby.message_id:
-                await bot.edit_message_text("⏰ لابی بازی به دلیل عدم شروع در 10 دقیقه بسته شد.", chat_id=lobby.chat_id, message_id=lobby.message_id, reply_markup=None)
+                await bot.edit_message_text("⏰ لابی بازی به دلیل عدم شروع در 10 دقیقه بسته شد.", chat_id=lobby.chat_id, message_id=lobby.message_id, reply_markup=group_finished_keyboard(lobby_id, "gqreport"))
         except Exception:
             logger.warning("Lobby timeout edit failed", exc_info=True)
     except asyncio.CancelledError:
@@ -870,8 +874,9 @@ async def finish_group_game(bot: Bot, db: Database, game: GroupGame) -> None:
             mention = f"@{game.lobby.usernames.get(uid)}" if game.lobby.usernames.get(uid) else trim_name(name)
             levelups.append((uid, mention, old_level, new_level, title_text))
         lines.append(f"{pos}. {trim_name(name)} — {score}/{len(game.questions)} ✅ (+{xp} XP)")
-    text = "🏆 نتیجه‌ی بازی\n━━━━━━━━━━━━━━\n" + "\n".join(lines) + "\n━━━━━━━━━━━━━━"
-    await edit_lobby(bot, game.lobby, text, None)
+    text = "🏆 نتیجه‌ی بازی\n━━━━━━━━━━━━━━\n" + "\n".join(lines) + "\n━━━━━━━━━━━━━━\n\nبرای گزارش مشکل، دکمه گزارش را بزن."
+    completed_group_games[game.lobby.lobby_id] = game
+    await edit_lobby(bot, game.lobby, text, group_finished_keyboard(game.lobby.lobby_id, "gqreport"))
     for task in game.timer_tasks.values():
         if task and not task.done():
             task.cancel()
@@ -1090,8 +1095,9 @@ async def finish_group_duel(bot: Bot, db: Database, game: GroupDuelGame) -> None
             await bot.send_message(uid, f"🎁 جوایز دوئل\nدرست: {score}\nایکس‌پی: +{xp_amount}\nسکه و جام در دوئل گروهی داده نمی‌شود.")
         except Exception:
             logger.exception("Could not send group duel reward PM")
-    text = f"⚔️ نتیجه‌ی دوئل\n━━━━━━━━━━━━━━\n🏆 {trim_name(winner_name)} برد\n{s1} درست vs {s2} درست\n━━━━━━━━━━━━━━\n🎁 جوایز در پیوی ارسال شد"
-    await edit_lobby(bot, game.lobby, text, None)
+    text = f"⚔️ نتیجه‌ی دوئل\n━━━━━━━━━━━━━━\n🏆 {trim_name(winner_name)} برد\n{s1} درست vs {s2} درست\n━━━━━━━━━━━━━━\n🎁 جوایز در پیوی ارسال شد\n\nبرای گزارش مشکل، دکمه گزارش را بزن."
+    completed_group_duels[game.lobby.lobby_id] = game
+    await edit_lobby(bot, game.lobby, text, group_finished_keyboard(game.lobby.lobby_id, "gdreport"))
     await db.log_group_game('duel', game.lobby.chat_id, game.lobby.inline_message_id, len(game.lobby.players), len(game.questions))
     group_duels.pop(game.lobby.lobby_id, None)
     lobbies.pop(game.lobby.lobby_id, None)
@@ -1117,7 +1123,7 @@ async def group_duel_leave(call: CallbackQuery, bot: Bot) -> None:
             await call.answer("شما داخل این دوئل نیستید", show_alert=False)
             return
         if call.from_user.id == lobby.starter_id:
-            await edit_lobby(bot, lobby, "❌ بازی به دلیل خروج سازنده بسته شد", None)
+            await edit_lobby(bot, lobby, "❌ بازی به دلیل خروج سازنده بسته شد", group_finished_keyboard(lobby.lobby_id, "gdreport"))
             lobbies.pop(lobby.lobby_id, None)
             group_duel_genres.pop(lobby.lobby_id, None)
             group_duel_offers.pop(lobby.lobby_id, None)
@@ -1141,3 +1147,64 @@ async def group_duel_leave(call: CallbackQuery, bot: Bot) -> None:
 async def group_duel_close(call: CallbackQuery, bot: Bot) -> None:
     # Backward compatibility for old inline messages created before removing this button.
     await call.answer("این دکمه دیگر فعال نیست؛ برای بستن دوئل سازنده باید خروج از دوئل را بزند", show_alert=False)
+
+
+def _report_game_by_prefix(prefix: str, game_id: str):
+    return completed_group_duels.get(game_id) if prefix == "gdreport" else completed_group_games.get(game_id)
+
+
+@router.callback_query(F.data.startswith(("gqreport:menu:", "gdreport:menu:")))
+async def group_report_menu(call: CallbackQuery) -> None:
+    await call.answer()
+    try:
+        prefix, _, game_id = call.data.split(":", 2)
+        game = _report_game_by_prefix(prefix, game_id)
+        if not game:
+            await call.answer("گزارش برای این بازی پیدا نشد", show_alert=True)
+            return
+        if call.message:
+            await call.message.answer("کدام سوال مشکل داشت؟", reply_markup=group_report_questions_keyboard(game_id, len(game.questions), prefix))
+        else:
+            await call.answer("برای گزارش، یکی از شماره سوال‌ها را انتخاب کن", show_alert=True)
+    except Exception:
+        logger.exception("Group report menu failed")
+
+
+@router.callback_query(F.data.startswith(("gqreport:q:", "gdreport:q:")))
+async def group_report_question(call: CallbackQuery, db: Database, bot: Bot, reports_channel_id: int | None) -> None:
+    await call.answer()
+    try:
+        prefix, _, game_id, idx_s = call.data.split(":", 3)
+        game = _report_game_by_prefix(prefix, game_id)
+        if not game:
+            await call.answer("گزارش برای این بازی پیدا نشد", show_alert=True)
+            return
+        idx = int(idx_s)
+        if idx < 0 or idx >= len(game.questions):
+            await call.answer("شماره سوال نامعتبر است", show_alert=True)
+            return
+        q = game.questions[idx]
+        report_id = await db.add_report(q['id'], call.from_user.id, None, f"گزارش از بازی گروهی/دوئل - سوال {idx+1}")
+        if reports_channel_id:
+            opts = [q['option1'], q['option2'], q['option3'], q['option4']]
+            correct = opts[int(q['correct_option']) - 1]
+            await bot.send_message(
+                reports_channel_id,
+                f"⚠️ گزارش سوال از بازی گروهی\n"
+                f"❓ سوال #{q['id']}: {q['text']}\n"
+                f"✅ جواب درست: {correct}\n"
+                f"👤 گزارش‌دهنده: {call.from_user.full_name} | ID: <code>{call.from_user.id}</code>\n"
+                f"📋 شماره سوال در بازی: {idx+1}\n"
+                f"📅 {jalali_datetime(now_iso())}",
+                reply_markup=report_admin_keyboard(q['id'], report_id),
+            )
+        if call.message:
+            await call.message.answer("✅ گزارش سوال ثبت شد.")
+        else:
+            await call.answer("✅ گزارش ثبت شد", show_alert=True)
+    except Exception:
+        logger.exception("Group report question failed")
+        try:
+            await call.answer("خطا در ثبت گزارش", show_alert=True)
+        except Exception:
+            pass

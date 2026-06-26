@@ -405,3 +405,22 @@ def group_duel_lobby_keyboard() -> InlineKeyboardMarkup:
     b.button(text="⚔️ قبول می‌کنم", callback_data="group_duel_accept")
     b.adjust(1)
     return b.as_markup()
+
+
+def group_finished_keyboard(game_id: str, report_prefix: str = "gqreport") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⚠️ گزارش", callback_data=f"{report_prefix}:menu:{game_id}")],
+        [
+            InlineKeyboardButton(text="🎮 بازی با رفیقم", switch_inline_query="بازی گروهی"),
+            InlineKeyboardButton(text="🔁 بازی مجدد", switch_inline_query_current_chat="بازی گروهی"),
+        ],
+    ])
+
+
+def group_report_questions_keyboard(game_id: str, count: int, report_prefix: str = "gqreport") -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for i in range(1, count + 1):
+        b.button(text=str(i), callback_data=f"{report_prefix}:q:{game_id}:{i-1}")
+    b.button(text="انصراف", callback_data="noop")
+    b.adjust(5)
+    return b.as_markup()
