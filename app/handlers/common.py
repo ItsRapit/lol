@@ -108,9 +108,9 @@ async def nav_home(call: CallbackQuery, state: FSMContext, db: Database) -> None
     await state.clear()
     is_admin = await db.is_admin(call.from_user.id)
     try:
-        await call.message.edit_text("منوی اصلی")
+        await call.message.edit_reply_markup(reply_markup=None)
     except Exception:
-        logger.debug("Could not edit nav home message", exc_info=True)
+        logger.debug("Could not clear nav markup", exc_info=True)
     await call.message.answer("منوی اصلی", reply_markup=main_menu(is_admin))
     await call.answer()
 

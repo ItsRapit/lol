@@ -3,7 +3,7 @@ from aiogram import Bot, Router, F
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
 from app.db import Database, now_iso
-from app.keyboards import review_question_keyboard, cancel_keyboard, main_menu
+from app.keyboards import review_question_keyboard, cancel_keyboard, main_menu, submission_genre_keyboard
 from app.states import QuestionSubmit
 from app.time_utils import jalali_datetime
 
@@ -69,10 +69,24 @@ async def q_correct(message: Message, state: FSMContext, db: Database) -> None:
             raise ValueError
         await state.update_data(correct=n)
         await state.set_state(QuestionSubmit.genre)
-        genres = "، ".join(await db.all_genres())
-        await message.answer(f"ژانر/دسته‌بندی سوال را بنویس. ژانرهای مجاز:\n{genres}", reply_markup=cancel_keyboard())
+        genres = await db.all_genres()
+        await message.answer("ژانرت رو انتخاب کن:", reply_markup=submission_genre_keyboard(genres))
     except ValueError:
         await message.answer("فقط عدد 1 تا 4 قابل قبول است.")
+
+
+async def save_question_submission(user_id: int, genre: str, db: Database, state: FSMContext, bot: Bot, admin_review_channel_id: int | None, target_message: Message) -> None:
+    d = await state.get_data()
+    opts = [d['option1'], d['option2'], d['option3'], d['option4']]
+    qid = await db.submit_question(user_id, d['text'], opts, d['correct'], genre)
+    if admin_review_channel_id:
+        text = (
+            f"➕ سوال پیشنهادی #{qid}\nSubmitter: <code>{user_id}</code>\nGenre: {genre}\nDate: {jalali_datetime(now_iso())}\n\n"
+            f"{d['text']}\n1) {opts[0]}\n2) {opts[1]}\n3) {opts[2]}\n4) {opts[3]}\nCorrect: {d['correct']}"
+        )
+        await bot.send_message(admin_review_channel_id, text, reply_markup=review_question_keyboard(qid))
+    await state.clear()
+    await target_message.answer("سوال ثبت شد و بعد از تایید ادمین وارد بازی می‌شود.", reply_markup=main_menu(await db.is_admin(user_id)))
 
 
 @router.message(QuestionSubmit.genre, F.text)
@@ -83,17 +97,7 @@ async def q_genre(message: Message, db: Database, state: FSMContext, bot: Bot, a
         if genre not in valid_genres:
             await message.answer("ژانر نامعتبر است. لطفاً دقیقاً یکی از ژانرهای مجاز را بدون کم/زیاد کردن بنویس:\n" + "، ".join(valid_genres))
             return
-        d = await state.get_data()
-        opts = [d['option1'], d['option2'], d['option3'], d['option4']]
-        qid = await db.submit_question(message.from_user.id, d['text'], opts, d['correct'], genre)
-        if admin_review_channel_id:
-            text = (
-                f"➕ سوال پیشنهادی #{qid}\nSubmitter: <code>{message.from_user.id}</code>\nGenre: {genre}\nDate: {jalali_datetime(now_iso())}\n\n"
-                f"{d['text']}\n1) {opts[0]}\n2) {opts[1]}\n3) {opts[2]}\n4) {opts[3]}\nCorrect: {d['correct']}"
-            )
-            await bot.send_message(admin_review_channel_id, text, reply_markup=review_question_keyboard(qid))
-        await state.clear()
-        await message.answer("سوال ثبت شد و بعد از تایید ادمین وارد بازی می‌شود.", reply_markup=main_menu(await db.is_admin(message.from_user.id)))
+        await save_question_submission(message.from_user.id, genre, db, state, bot, admin_review_channel_id, message)
     except Exception:
         logger.exception("Submit save failed")
         await message.answer("خطا در ثبت سوال.")
@@ -124,4 +128,23 @@ async def q_review(call: CallbackQuery, db: Database, bot: Bot) -> None:
         await call.answer("ثبت شد.")
     except Exception:
         logger.exception("Question review failed")
+        await call.answer("خطا", show_alert=True)
+
+
+@router.callback_query(QuestionSubmit.genre, F.data.startswith("submit_genre:"))
+async def q_genre_button(call: CallbackQuery, db: Database, state: FSMContext, bot: Bot, admin_review_channel_id: int | None) -> None:
+    try:
+        await call.answer()
+        idx = int(call.data.split(":", 1)[1])
+        genres = await db.all_genres()
+        if idx < 0 or idx >= len(genres):
+            await call.answer("ژانر نامعتبر است", show_alert=True)
+            return
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            logger.debug("Could not clear genre keyboard", exc_info=True)
+        await save_question_submission(call.from_user.id, genres[idx], db, state, bot, admin_review_channel_id, call.message)
+    except Exception:
+        logger.exception("Submit genre button failed")
         await call.answer("خطا", show_alert=True)

@@ -17,7 +17,7 @@ def main_menu(is_admin: bool = False) -> ReplyKeyboardMarkup:
     ]
     if is_admin:
         rows.append([KeyboardButton(text="🛡 پنل ادمین")])
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, one_time_keyboard=True)
 
 
 def cancel_keyboard() -> ReplyKeyboardMarkup:
@@ -431,3 +431,11 @@ def group_replay_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🎮 بازی با رفیقم", switch_inline_query=""),
         InlineKeyboardButton(text="🔁 بازی مجدد", switch_inline_query_current_chat=""),
     ]])
+
+
+def submission_genre_keyboard(genres: list[str]) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for idx, genre in enumerate(genres):
+        b.button(text=genre, callback_data=f"submit_genre:{idx}")
+    b.adjust(2)
+    return b.as_markup()
