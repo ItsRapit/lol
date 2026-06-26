@@ -370,7 +370,7 @@ class Database:
             "random_duel_win_coin_bonus": ("20", "Extra coin bonus for random duel winner"),
             "winner_bonus_xp": ("20", "XP bonus for duel winner"),
             "powerup_remove2_cost": ("15", "Cost of remove two options powerup"),
-            "powerup_second_chance_cost": ("20", "Cost of second chance powerup"),
+            "powerup_auto_answer_cost": ("20", "Cost of auto-answer powerup"),
             "powerup_max_uses_per_duel": ("3", "Maximum uses per powerup per user per duel"),
             "question_approval_reward_coins": ("10", "Coins rewarded to user when submitted question is approved"),
             "duel_draw_coin_reward": ("5", "Coin reward for each player on draw"),
@@ -913,14 +913,14 @@ class Database:
     async def powerup_costs_for_user(self, duel_id: int, user_id: int) -> dict[str, int]:
         max_uses = await self.get_int("powerup_max_uses_per_duel", 3)
         remove_uses = await self.powerup_use_count(duel_id, user_id, "remove2")
-        second_uses = await self.powerup_use_count(duel_id, user_id, "second")
+        auto_uses = await self.powerup_use_count(duel_id, user_id, "auto")
         remove_base = await self.get_int("powerup_remove2_cost", 15)
-        second_base = await self.get_int("powerup_second_chance_cost", 20)
+        auto_base = await self.get_int("powerup_auto_answer_cost", 20)
         return {
             "remove2": -1 if remove_uses >= max_uses else remove_base * (2 ** remove_uses),
-            "second": -1 if second_uses >= max_uses else second_base * (2 ** second_uses),
+            "auto": -1 if auto_uses >= max_uses else auto_base * (2 ** auto_uses),
             "remove2_uses": remove_uses,
-            "second_uses": second_uses,
+            "auto_uses": auto_uses,
             "max": max_uses,
         }
 

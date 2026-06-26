@@ -56,7 +56,7 @@ def genres_keyboard(duel_id: int, genres: list[str], selected: set[str], max_cou
     return b.as_markup()
 
 
-def question_keyboard(duel_id: int, qid: int, options: list[str], hidden: set[int] | None = None, cost_remove2: int = 0, cost_second: int = 0) -> InlineKeyboardMarkup:
+def question_keyboard(duel_id: int, qid: int, options: list[str], hidden: set[int] | None = None, cost_auto: int = 0) -> InlineKeyboardMarkup:
     hidden = hidden or set()
     b = InlineKeyboardBuilder()
     for i, opt in enumerate(options, 1):
@@ -64,12 +64,10 @@ def question_keyboard(duel_id: int, qid: int, options: list[str], hidden: set[in
             b.button(text="❌", callback_data="noop")
         else:
             b.button(text=f"{i}. {opt}", callback_data=f"ans:{duel_id}:{qid}:{i}")
-    remove_text = "🔪 حذف دو گزینه — ❌" if cost_remove2 < 0 else f"🔪 حذف دو گزینه — {cost_remove2}🪙"
-    second_text = "🔄 شانس دوباره — ❌" if cost_second < 0 else f"🔄 شانس دوباره — {cost_second}🪙"
-    b.button(text=remove_text, callback_data="noop" if cost_remove2 < 0 else f"power:remove2:{duel_id}:{qid}")
-    b.button(text=second_text, callback_data="noop" if cost_second < 0 else f"power:second:{duel_id}:{qid}")
+    auto_text = "🎯 جواب خودکار — ❌" if cost_auto < 0 else f"🎯 جواب خودکار — {cost_auto}🪙"
+    b.button(text=auto_text, callback_data="noop" if cost_auto < 0 else f"power:auto:{duel_id}:{qid}")
     b.button(text="⚠️ گزارش مشکل سوال", callback_data=f"issue_report:{duel_id}:{qid}")
-    b.adjust(1, 1, 1, 1, 1, 1, 1)
+    b.adjust(1, 1, 1, 1, 1, 1)
     return b.as_markup()
 
 
@@ -437,5 +435,22 @@ def submission_genre_keyboard(genres: list[str]) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     for idx, genre in enumerate(genres):
         b.button(text=genre, callback_data=f"submit_genre:{idx}")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def duel_finished_keyboard(duel_id: int, opponent_id: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="📋 گزارش و جواب‌ها", callback_data=f"duel_report_answers:{duel_id}")
+    b.button(text="👤 دیدن پروفایل حریف", callback_data=f"opponent_profile:{opponent_id}")
+    b.button(text="🔁 درخواست بازی مجدد", callback_data=f"rematch_request:{opponent_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def rematch_keyboard(requester_id: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ قبول", callback_data=f"rematch_accept:{requester_id}")
+    b.button(text="❌ رد", callback_data=f"rematch_decline:{requester_id}")
     b.adjust(2)
     return b.as_markup()
