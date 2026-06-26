@@ -15,6 +15,7 @@ from app.utils import invite_token, options_from_question
 from app.states import ReportQuestion
 from app.notifications import send_duel_transition_notifications, send_streak_notification
 from app.time_utils import jalali_datetime
+from app.profile_view import build_profile_text
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -346,7 +347,7 @@ async def send_current_question(duel_id: int, db: Database, bot: Bot) -> None:
         text = f"سوال {seq + 1}\nID: <code>{q['id']}</code>\n\n{q['text']}"
         for uid in [duel['player1_id'], duel['player2_id']]:
             costs = await db.powerup_costs_for_user(duel_id, uid)
-            markup = question_keyboard(duel_id, q['id'], options_from_question(q), cost_auto=costs['auto'])
+            markup = question_keyboard(duel_id, q['id'], options_from_question(q), cost_remove2=costs['remove2'], cost_auto=costs['auto'])
             old_message_id = duel_main_message_ids.get((duel_id, uid))
             if old_message_id:
                 try:
@@ -579,11 +580,11 @@ async def powerup_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
     try:
         _, ptype, duel_s, qid_s = call.data.split(":")
         duel_id, qid = int(duel_s), int(qid_s)
-        if ptype != 'auto':
+        if ptype not in {'remove2', 'auto'}:
             await call.message.answer("این پاورآپ دیگر فعال نیست.")
             return
         costs = await db.powerup_costs_for_user(duel_id, call.from_user.id)
-        cost = costs['auto']
+        cost = costs['remove2'] if ptype == 'remove2' else costs['auto']
         if cost < 0:
             await call.message.answer("❌ سقف استفاده از این پاورآپ در این دوئل پر شده است.")
             return
@@ -607,6 +608,15 @@ async def powerup_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
             await call.message.answer("امکان استفاده از این پاورآپ نیست.")
             return
         await db.change_coins(call.from_user.id, -cost, f"powerup_{ptype}", duel_id)
+        if ptype == 'remove2':
+            wrong = [i for i in range(1, 5) if i != int(q['correct_option'])]
+            hidden = set(random.sample(wrong, 2))
+            hidden_options_temp[(duel_id, call.from_user.id, qid)] = hidden
+            new_costs = await db.powerup_costs_for_user(duel_id, call.from_user.id)
+            markup = question_keyboard(duel_id, qid, options_from_question(q), hidden, cost_remove2=-1, cost_auto=new_costs['auto'])
+            asyncio.create_task(safe_edit_reply_markup(call.message, markup))
+            await call.message.answer(f"✅ خرید موفق\n🪙 {cost} سکه کسر شد.\n🔪 دو گزینه حذف شد.")
+            return
         rt = runtime(duel_id)
         ms = int((time.monotonic() - rt.question_started_at) * 1000)
         correct_option = int(q['correct_option'])

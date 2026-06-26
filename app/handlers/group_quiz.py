@@ -769,10 +769,6 @@ async def group_answer(call: CallbackQuery, db: Database, bot: Bot) -> None:
     q = game.questions[idx]
     result_text = "✅ پاسخ شما صحیح بود." if opt == int(q['correct_option']) else "❌ پاسخ شما اشتباه بود."
     await call.answer(result_text, show_alert=False)
-    try:
-        await bot.send_message(call.from_user.id, result_text)
-    except Exception:
-        logger.debug("Could not send private group answer result", exc_info=True)
     remaining = game.remaining.get(idx, game.lobby.timer_seconds)
     total_seconds = game.lobby.timer_seconds
     await edit_lobby(bot, game.lobby, group_question_text(game, idx, remaining, total_seconds), answer_keyboard(lobby_id, idx, q))

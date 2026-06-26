@@ -56,7 +56,7 @@ def genres_keyboard(duel_id: int, genres: list[str], selected: set[str], max_cou
     return b.as_markup()
 
 
-def question_keyboard(duel_id: int, qid: int, options: list[str], hidden: set[int] | None = None, cost_auto: int = 0) -> InlineKeyboardMarkup:
+def question_keyboard(duel_id: int, qid: int, options: list[str], hidden: set[int] | None = None, cost_remove2: int = 0, cost_auto: int = 0) -> InlineKeyboardMarkup:
     hidden = hidden or set()
     b = InlineKeyboardBuilder()
     for i, opt in enumerate(options, 1):
@@ -64,9 +64,11 @@ def question_keyboard(duel_id: int, qid: int, options: list[str], hidden: set[in
             b.button(text="❌", callback_data="noop")
         else:
             b.button(text=f"{i}. {opt}", callback_data=f"ans:{duel_id}:{qid}:{i}")
+    remove_text = "🔪 حذف دو گزینه — ❌" if cost_remove2 < 0 else f"🔪 حذف دو گزینه — {cost_remove2}🪙"
     auto_text = "🎯 جواب خودکار — ❌" if cost_auto < 0 else f"🎯 جواب خودکار — {cost_auto}🪙"
+    b.button(text=remove_text, callback_data="noop" if cost_remove2 < 0 else f"power:remove2:{duel_id}:{qid}")
     b.button(text=auto_text, callback_data="noop" if cost_auto < 0 else f"power:auto:{duel_id}:{qid}")
-    b.adjust(2, 2, 1)
+    b.adjust(2, 2, 1, 1)
     return b.as_markup()
 
 

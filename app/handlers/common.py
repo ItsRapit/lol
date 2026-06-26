@@ -8,6 +8,7 @@ from app.keyboards import main_menu, leaderboard_basis_keyboard, leaderboard_per
 from app.utils import ensure_user, xp_progress_text, rtl_line, to_english_digits, league_with_emoji, rank_with_emoji
 from app.notifications import send_streak_notification
 from app.time_utils import jalali_date, jalali_datetime
+from app.profile_view import build_profile_text
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -118,41 +119,8 @@ async def nav_home(call: CallbackQuery, state: FSMContext, db: Database) -> None
 @router.message(F.text == "👤 پروفایل")
 async def profile(message: Message, db: Database) -> None:
     try:
-        u = await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
-        title = await db.user_title(message.from_user.id)
-        if title:
-            title_text = f"{title['emoji'] or ''} {title['name']}".strip()
-        else:
-            title_text = rank_with_emoji(await db.get_rank_title(u['level']))
-        league = await db.get_user_league(u['cups'])
-        league_name = league_with_emoji(league['name'] if league else 'بدون لیگ')
-        cur, nxt = await db.level_bounds(u['level'])
-        username = f"@{u['username']}" if u['username'] else ""
-        current_xp = max(0, int(u['xp']) - int(cur))
-        required_xp = max(1, int(nxt) - int(cur))
-        filled = max(0, min(10, int((current_xp / required_xp) * 10)))
-        xp_bar_blocks = "▰" * filled + "▱" * (10 - filled)
-        analysis = await db.user_strengths_weaknesses(message.from_user.id)
-        genre_analysis = ""
-        if analysis['strengths']:
-            strengths = "\n".join(f"🥇 {r['genre']} — {int(r['pct'])}%" if i == 0 else f"🥈 {r['genre']} — {int(r['pct'])}%" for i, r in enumerate(analysis['strengths']))
-            weaknesses = "\n".join(f"📉 {r['genre']} — {int(r['pct'])}%" for r in analysis['weaknesses'])
-            genre_analysis = f"\n\n💪 نقاط قوت:\n{strengths}"
-            if weaknesses:
-                genre_analysis += f"\n\n⚠️ نقاط ضعف:\n{weaknesses}"
-        total_duels = int(u['wins']) + int(u['losses']) + int(u['draws'])
-        wrong = max(0, int(u['total_answers']) - int(u['correct_answers']))
-        await message.answer(
-            f"👤 <b>{u['first_name'] or 'کاربر'}</b> {username}\n"
-            f"{title_text} | لول {u['level']}\n"
-            f"ایکس‌پی {current_xp}/{required_xp} {xp_bar_blocks}\n"
-            f"🏆 {league_name} — {u['cups']} جام\n"
-            f"🪙 سکه: {u['coins']}\n\n"
-            f"⚔️ دوئل‌ها: {total_duels} | برد {u['wins']} / مساوی {u['draws']} / شکست {u['losses']}\n"
-            f"✅ پاسخ صحیح: {u['correct_answers']} | ❌ پاسخ غلط: {wrong}"
-            f"{genre_analysis}",
-            reply_markup=back_home_keyboard(),
-        )
+        await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+        await message.answer(await build_profile_text(db, message.from_user.id), reply_markup=back_home_keyboard())
     except Exception:
         logger.exception("Profile failed")
         await message.answer("خطا در نمایش پروفایل.")
