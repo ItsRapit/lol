@@ -421,7 +421,7 @@ def group_report_questions_keyboard(game_id: str, count: int, report_prefix: str
     b = InlineKeyboardBuilder()
     for i in range(1, count + 1):
         b.button(text=str(i), callback_data=f"{report_prefix}:q:{game_id}:{i-1}")
-    b.button(text="انصراف", callback_data="noop")
+    b.button(text="انصراف", callback_data=f"{report_prefix}:cancel:{game_id}")
     b.adjust(5)
     return b.as_markup()
 

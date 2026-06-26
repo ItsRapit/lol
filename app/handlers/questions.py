@@ -20,8 +20,7 @@ async def submit_entry(message: Message, db: Database, state: FSMContext) -> Non
             await message.answer(f"سقف ثبت سوال امروز شما ({limit}) تکمیل شده است.")
             return
         await state.set_state(QuestionSubmit.text)
-        await message.answer("ثبت سوال:", reply_markup=ReplyKeyboardRemove())
-        await message.answer("متن سوال را ارسال کن.", reply_markup=cancel_keyboard())
+        await message.answer("➕ ثبت سوال\nمتن سوال را ارسال کن.", reply_markup=cancel_keyboard())
     except Exception:
         logger.exception("Submit entry failed")
         await message.answer("خطا.")

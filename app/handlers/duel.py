@@ -59,8 +59,7 @@ async def duel_entry(message: Message, db: Database) -> None:
         return
     random_cost = await db.get_int('random_duel_cost', 5)
     friendly_cost = await db.get_int('friendly_duel_cost', 20)
-    await message.answer("⚔️ دوئل", reply_markup=ReplyKeyboardRemove())
-    await message.answer("یکی را انتخاب کن:", reply_markup=duel_menu(random_cost, friendly_cost))
+    await message.answer("⚔️ دوئل\nیکی را انتخاب کن:", reply_markup=duel_menu(random_cost, friendly_cost))
 
 
 @router.callback_query(F.data == "duel:random")

@@ -58,8 +58,7 @@ async def admin_entry(message: Message, db: Database, state: FSMContext) -> None
         if not await require_admin_message(message, db):
             return
         await state.clear()
-        await message.answer("پنل ادمین:", reply_markup=ReplyKeyboardRemove())
-        await message.answer("انتخاب کنید:", reply_markup=admin_panel())
+        await message.answer("⚙️ پنل مدیریت", reply_markup=admin_panel())
     except Exception:
         logger.exception("Admin entry failed")
         await message.answer("خطا.")

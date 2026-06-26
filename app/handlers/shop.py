@@ -17,8 +17,7 @@ router = Router()
 
 @router.message(F.text == "🛒 فروشگاه")
 async def shop_entry(message: Message) -> None:
-    await message.answer("فروشگاه:", reply_markup=ReplyKeyboardRemove())
-    await message.answer("نوع بسته را انتخاب کن:", reply_markup=shop_sections_keyboard())
+    await message.answer("🛒 فروشگاه\nنوع بسته را انتخاب کن:", reply_markup=shop_sections_keyboard())
 
 
 @router.callback_query(F.data == "shop_back:sections")

@@ -100,14 +100,18 @@ async def help_command(message: Message, db: Database) -> None:
 async def cancel(message: Message, state: FSMContext, db: Database) -> None:
     await state.clear()
     is_admin = await db.is_admin(message.from_user.id)
-    await message.answer("عملیات لغو شد. به منوی اصلی برگشتی.", reply_markup=main_menu(is_admin))
+    await message.answer("منوی اصلی", reply_markup=main_menu(is_admin))
 
 
 @router.callback_query(F.data == "nav:home")
 async def nav_home(call: CallbackQuery, state: FSMContext, db: Database) -> None:
     await state.clear()
     is_admin = await db.is_admin(call.from_user.id)
-    await call.message.answer("به منوی اصلی برگشتی.", reply_markup=main_menu(is_admin))
+    try:
+        await call.message.edit_text("منوی اصلی")
+    except Exception:
+        logger.debug("Could not edit nav home message", exc_info=True)
+    await call.message.answer("منوی اصلی", reply_markup=main_menu(is_admin))
     await call.answer()
 
 
@@ -156,8 +160,7 @@ async def profile(message: Message, db: Database) -> None:
 
 @router.message(F.text == "🏆 لیدربورد")
 async def leaderboard_entry(message: Message) -> None:
-    await message.answer("لیدربورد را بر چه اساسی ببینی؟", reply_markup=ReplyKeyboardRemove())
-    await message.answer("انتخاب کن:", reply_markup=leaderboard_basis_keyboard())
+    await message.answer("🏆 لیدربرد\nلیدربرد را بر چه اساسی ببینی؟", reply_markup=leaderboard_basis_keyboard())
 
 
 @router.callback_query(F.data.startswith("lb_basis:"))
@@ -169,7 +172,7 @@ async def leaderboard_basis(call: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "lb_back:basis")
 async def leaderboard_back(call: CallbackQuery) -> None:
-    await call.message.edit_text("لیدربورد را بر چه اساسی ببینی؟", reply_markup=leaderboard_basis_keyboard())
+    await call.message.edit_text("🏆 لیدربرد\nلیدربرد را بر چه اساسی ببینی؟", reply_markup=leaderboard_basis_keyboard())
     await call.answer()
 
 
@@ -244,8 +247,7 @@ async def referral(message: Message, db: Database, bot_username: str) -> None:
 
 @router.message(F.text == "🏰 کلن (به‌زودی)")
 async def clan_placeholder(message: Message) -> None:
-    await message.answer("🏰 قابلیت کلن به‌زودی اضافه می‌شود.", reply_markup=ReplyKeyboardRemove())
-    await message.answer("برای برگشت به منوی اصلی بزن:", reply_markup=back_home_keyboard())
+    await message.answer("🏰 قابلیت کلن به‌زودی اضافه می‌شود.", reply_markup=back_home_keyboard())
 
 
 @router.callback_query(F.data == "check_force_join")

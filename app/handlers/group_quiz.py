@@ -1224,3 +1224,12 @@ async def group_report_question(call: CallbackQuery, db: Database, bot: Bot, rep
             await call.answer("خطا در ثبت گزارش", show_alert=True)
         except Exception:
             pass
+
+
+@router.callback_query(F.data.startswith(("gqreport:cancel:", "gdreport:cancel:")))
+async def group_report_cancel(call: CallbackQuery) -> None:
+    await call.answer()
+    try:
+        await call.message.edit_text("گزارش شما لغو شد")
+    except Exception:
+        logger.exception("Group report cancel edit failed")
