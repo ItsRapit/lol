@@ -165,13 +165,11 @@ async def require_force_join(call: CallbackQuery, db: Database, bot: Bot) -> boo
     ok = await check_channel_membership(bot, call.from_user.id, channel)
     if ok:
         return True
-    await call.answer(f"برای بازی باید عضو کانال {channel} باشی", show_alert=True)
-    url = f"https://t.me/{channel.lstrip('@')}" if channel.startswith('@') else None
-    if url and call.message:
-        await call.message.answer(
-            "برای استفاده از چالشینو باید عضو کانال ما باشی 👇",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="عضویت در کانال", url=url)]])
-        )
+    await call.answer(
+        text="ربات را مجدداً استارت کنید",
+        show_alert=True,
+        url="https://t.me/ChalleshinoBot?start=force_join",
+    )
     return False
 
 
@@ -212,9 +210,9 @@ async def lobby_timeout(lobby_id: str, bot: Bot) -> None:
         lobbies.pop(lobby_id, None)
         try:
             if lobby.inline_message_id:
-                await bot.edit_message_text("⏰ لابی بازی به دلیل عدم شروع در 10 دقیقه بسته شد.", inline_message_id=lobby.inline_message_id, reply_markup=group_finished_keyboard(lobby_id, "gqreport"))
+                await bot.edit_message_text("⏰ لابی بازی به دلیل عدم شروع در 10 دقیقه بسته شد.", inline_message_id=lobby.inline_message_id, reply_markup=group_replay_keyboard())
             elif lobby.chat_id and lobby.message_id:
-                await bot.edit_message_text("⏰ لابی بازی به دلیل عدم شروع در 10 دقیقه بسته شد.", chat_id=lobby.chat_id, message_id=lobby.message_id, reply_markup=group_finished_keyboard(lobby_id, "gqreport"))
+                await bot.edit_message_text("⏰ لابی بازی به دلیل عدم شروع در 10 دقیقه بسته شد.", chat_id=lobby.chat_id, message_id=lobby.message_id, reply_markup=group_replay_keyboard())
         except Exception:
             logger.warning("Lobby timeout edit failed", exc_info=True)
     except asyncio.CancelledError:
@@ -462,7 +460,7 @@ async def inline_join_redirect(call: CallbackQuery, db: Database, bot: Bot) -> N
 
 async def close_or_update_group_lobby_after_leave(bot: Bot, lobby: GroupLobby, user_id: int) -> None:
     if user_id == lobby.starter_id:
-        await edit_lobby(bot, lobby, "❌ بازی به دلیل خروج سازنده بسته شد", None)
+        await edit_lobby(bot, lobby, "❌ بازی به دلیل خروج سازنده بسته شد", group_replay_keyboard())
         lobbies.pop(lobby.lobby_id, None)
         return
     lobby.players.pop(user_id, None)
@@ -1126,7 +1124,7 @@ async def group_duel_leave(call: CallbackQuery, bot: Bot) -> None:
             await call.answer("شما داخل این دوئل نیستید", show_alert=False)
             return
         if call.from_user.id == lobby.starter_id:
-            await edit_lobby(bot, lobby, "❌ بازی به دلیل خروج سازنده بسته شد", group_finished_keyboard(lobby.lobby_id, "gdreport"))
+            await edit_lobby(bot, lobby, "❌ بازی به دلیل خروج سازنده بسته شد", group_replay_keyboard())
             lobbies.pop(lobby.lobby_id, None)
             group_duel_genres.pop(lobby.lobby_id, None)
             group_duel_offers.pop(lobby.lobby_id, None)
