@@ -14,6 +14,7 @@ def main_menu(is_admin: bool = False) -> ReplyKeyboardMarkup:
         [KeyboardButton(text="🛒 فروشگاه"), KeyboardButton(text="🏆 لیدربورد")],
         [KeyboardButton(text="👤 پروفایل"), KeyboardButton(text="➕ ثبت سوال")],
         [KeyboardButton(text="🎁 رفرال"), KeyboardButton(text="🏰 کلن (به‌زودی)")],
+        [KeyboardButton(text="📞 تماس"), KeyboardButton(text="📘 راهنما")],
     ]
     if is_admin:
         rows.append([KeyboardButton(text="🛡 پنل ادمین")])

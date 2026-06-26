@@ -37,6 +37,7 @@ second_chance_question: dict[tuple[int, int], int] = {}
 question_message_ids: dict[tuple[int, int, int], int] = {}
 duel_main_message_ids: dict[tuple[int, int], int] = {}
 rematch_timeout_tasks: dict[tuple[int, int], asyncio.Task] = {}
+rematch_sent_pairs: set[tuple[int, int]] = set()
 queue_timeout_tasks: dict[int, asyncio.Task] = {}
 genre_timeout_tasks: dict[tuple[int, int], asyncio.Task] = {}
 unanswered_streaks: dict[tuple[int, int], int] = {}
@@ -407,6 +408,37 @@ async def forfeit_inactive_duel(duel_id: int, inactive_users: list[int], db: Dat
         logger.exception("Forfeit inactive duel failed")
 
 
+async def edit_duel_question_results(duel_id: int, qid: int, db: Database, bot: Bot) -> None:
+    try:
+        duel = await db.get_duel(duel_id)
+        q = await db.get_question(qid)
+        if not duel or not q:
+            return
+        opts = options_from_question(q)
+        correct_text = opts[int(q['correct_option']) - 1]
+        seq = int(duel['current_index']) + 1
+        for uid in [duel['player1_id'], duel['player2_id']]:
+            ans = await db.fetchone("SELECT selected_option,is_correct FROM duel_answers WHERE duel_id=? AND question_id=? AND user_id=?", (duel_id, qid, uid))
+            if ans and ans['selected_option']:
+                selected_text = opts[int(ans['selected_option']) - 1]
+                status = "✅ درست" if ans['is_correct'] else f"❌ اشتباه\nپاسخ شما: {selected_text}\nجواب درست: {correct_text} ✅"
+            else:
+                status = f"⏱ بدون پاسخ\nجواب درست: {correct_text} ✅"
+            text = f"سوال {seq}\nID: <code>{qid}</code>\n\n{q['text']}\n\n{status}"
+            mid = question_message_ids.get((duel_id, uid, qid)) or duel_main_message_ids.get((duel_id, uid))
+            try:
+                if mid:
+                    await bot.edit_message_text(text, chat_id=uid, message_id=mid)
+                else:
+                    msg = await bot.send_message(uid, text)
+                    duel_main_message_ids[(duel_id, uid)] = msg.message_id
+            except Exception:
+                logger.exception("Could not edit duel question result for user=%s", uid)
+                await bot.send_message(uid, text)
+    except Exception:
+        logger.exception("Edit duel question results failed")
+
+
 async def timeout_question(duel_id: int, qid: int, seconds: int, db: Database, bot: Bot) -> None:
     try:
         await asyncio.sleep(seconds)
@@ -425,6 +457,8 @@ async def timeout_question(duel_id: int, qid: int, seconds: int, db: Database, b
             inactive_users = [uid for uid in [duel['player1_id'], duel['player2_id']] if unanswered_streaks.get((duel_id, uid), 0) >= 3]
             await forfeit_inactive_duel(duel_id, inactive_users, db, bot)
             return
+        await edit_duel_question_results(duel_id, qid, db, bot)
+        await asyncio.sleep(1.2)
         await advance_duel(duel_id, db, bot, qid)
     except asyncio.CancelledError:
         return
@@ -455,8 +489,8 @@ async def answer_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
             return
         unanswered_streaks[(duel_id, call.from_user.id)] = 0
         second_chance_pending.discard(pending_key)
-        base_result_text = f"سوال {duel['current_index'] + 1}\nID: <code>{qid}</code>\n\n{q['text']}"
-        if opt == int(q['correct_option']):
+        is_correct = opt == int(q['correct_option'])
+        if is_correct:
             bonus = 0
             if ms <= 5000:
                 bonus = await db.get_int('fast_bonus_xp_0_5', 5)
@@ -464,21 +498,13 @@ async def answer_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
                 bonus = await db.get_int('fast_bonus_xp_5_10', 2)
             if bonus:
                 await db.change_xp(call.from_user.id, bonus, 'fast_answer_bonus', duel_id)
-            msg = "✅ درست"
-            if bonus:
-                msg += f" ⚡ پاسخ سریع: +{bonus} ایکس‌پی"
+            await call.answer(('✅ درست' + (f' ⚡ +{bonus} ایکس‌پی' if bonus else '')), show_alert=False)
         else:
-            msg = f"❌ اشتباه\nجواب درست: {correct_text} ✅{explanation}"
-        result_text = f"{base_result_text}\n\n{msg}"
-        try:
-            await call.message.edit_text(result_text)
-        except Exception:
-            logger.exception("Could not edit answered question message; sending fallback")
-            await call.message.answer(result_text)
-        await call.answer()
+            await call.answer('❌ اشتباه', show_alert=False)
         if await db.answered_count_for_question(duel_id, qid) >= 2:
             rt.timeout_task.cancel() if rt.timeout_task and not rt.timeout_task.done() else None
-            await asyncio.sleep(1.5)
+            await edit_duel_question_results(duel_id, qid, db, bot)
+            await asyncio.sleep(1.2)
             await advance_duel(duel_id, db, bot, qid)
     except Exception:
         logger.exception("Answer failed")
@@ -760,19 +786,7 @@ async def opponent_profile_callback(call: CallbackQuery, db: Database) -> None:
     await call.answer()
     try:
         uid = int(call.data.split(":")[1])
-        u = await db.get_user(uid)
-        if not u:
-            await call.message.answer("پروفایل حریف پیدا نشد.")
-            return
-        league = await db.get_user_league(u['cups'])
-        await call.message.answer(
-            f"👤 {u['first_name'] or 'کاربر'}\n"
-            f"Level: {u['level']}\n"
-            f"ایکس‌پی: {u['xp']}\n"
-            f"لیگ: {league['name'] if league else '-'}\n"
-            f"جام: {u['cups']}\n"
-            f"برد/مساوی/شکست: {u['wins']}/{u['draws']}/{u['losses']}"
-        )
+        await call.message.answer(await build_profile_text(db, uid))
     except Exception:
         logger.exception("Opponent profile failed")
         await call.message.answer("خطا در نمایش پروفایل حریف.")
@@ -794,16 +808,19 @@ async def rematch_timeout(requester_id: int, opponent_id: int, bot: Bot) -> None
 
 @router.callback_query(F.data.startswith("rematch_request:"))
 async def rematch_request_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
-    await call.answer()
     try:
         opponent_id = int(call.data.split(":")[1])
-        await bot.send_message(opponent_id, "حریف شما درخواست بازی مجدد ارسال کرده است.", reply_markup=rematch_keyboard(call.from_user.id))
         key = (call.from_user.id, opponent_id)
+        if key in rematch_sent_pairs:
+            await call.answer("دیگه نمی‌تونی برای این حریف درخواست مجدد بفرستی", show_alert=True)
+            return
+        rematch_sent_pairs.add(key)
+        await bot.send_message(opponent_id, "حریف شما درخواست بازی مجدد ارسال کرده است.", reply_markup=rematch_keyboard(call.from_user.id))
         old = rematch_timeout_tasks.pop(key, None)
         if old and not old.done():
             old.cancel()
         rematch_timeout_tasks[key] = asyncio.create_task(rematch_timeout(call.from_user.id, opponent_id, bot))
-        await call.message.answer("درخواست بازی مجدد برای حریف ارسال شد.")
+        await call.answer("درخواست ارسال شد", show_alert=False)
     except Exception:
         logger.exception("Rematch request failed")
         await call.message.answer("امکان ارسال درخواست بازی مجدد نبود.")

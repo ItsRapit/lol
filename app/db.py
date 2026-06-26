@@ -387,6 +387,7 @@ class Database:
             "group_quiz_timer_seconds": ("30", "Seconds per group quiz question"),
             "group_quiz_entry_cost": ("0", "Entry cost for group quiz; currently XP-only rewards"),
             "payment_card_holder": ("", "Card holder name shown in payment instructions"),
+            "contact_admin_id": ("@ChalleshinoSupport", "Contact/support id shown to users"),
             "reports_channel_id": ("", "Admin reports/log channel id"),
             "force_join_enabled": ("0", "Enable force join channel before games"),
             "force_join_channel": ("", "Force join channel username or id"),

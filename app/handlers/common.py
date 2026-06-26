@@ -238,3 +238,22 @@ async def check_force_join_callback(call: CallbackQuery, db: Database, bot: Bot)
             await call.message.answer("فعلاً امکان بررسی نبود. /start را دوباره بزن.")
     except Exception:
         logger.exception("Check force join callback failed")
+
+
+@router.message(F.text == "📞 تماس")
+async def contact_entry(message: Message, db: Database) -> None:
+    try:
+        contact = await db.get_setting("contact_admin_id", "@ChalleshinoSupport")
+        await message.answer(f"📞 ارتباط با پشتیبانی:\n{contact}")
+    except Exception:
+        logger.exception("Contact failed")
+        await message.answer("خطا در نمایش اطلاعات تماس.")
+
+
+@router.message(F.text == "📘 راهنما")
+async def help_menu_entry(message: Message, db: Database) -> None:
+    try:
+        await message.answer(await db.render_help_text())
+    except Exception:
+        logger.exception("Help menu failed")
+        await message.answer("خطا در نمایش راهنما.")
