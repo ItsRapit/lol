@@ -14,7 +14,7 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.db import Database, now_iso
 from app.time_utils import jalali_datetime
-from app.keyboards import group_duel_lobby_keyboard, group_finished_keyboard, group_report_questions_keyboard, report_admin_keyboard, group_finished_keyboard, group_report_questions_keyboard
+from app.keyboards import group_duel_lobby_keyboard, group_finished_keyboard, group_replay_keyboard, group_report_questions_keyboard, report_admin_keyboard, group_finished_keyboard, group_report_questions_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -144,13 +144,14 @@ async def check_channel_membership(bot: Bot, user_id: int, channel_id: str) -> b
         return True
 
 
-async def ensure_user_started_callback(call: CallbackQuery, db: Database) -> bool:
+async def ensure_user_started_callback(call: CallbackQuery, db: Database, referrer_id: int | None = None) -> bool:
     user_exists = await db.fetchone("SELECT id FROM users WHERE telegram_id = ?", (call.from_user.id,))
     if not user_exists:
+        payload = f"ref_{referrer_id}" if referrer_id else "from_group_game"
         await call.answer(
-            text="چالشینو\n\nابتدا ربات را استارت کنید 👇\n@ChalleshinoBot",
+            text="چالشینو\n\nابتدا ربات را استارت کنید",
             show_alert=True,
-            url="https://t.me/ChalleshinoBot?start=from_group_game",
+            url=f"https://t.me/ChalleshinoBot?start={payload}",
         )
         return False
     return True
@@ -447,14 +448,14 @@ async def chosen_result_handler(chosen: ChosenInlineResult, bot: Bot, db: Databa
 
 @router.callback_query(F.data.in_({"group_quiz_join_inline", "group_quiz_join"}))
 async def inline_join_redirect(call: CallbackQuery, db: Database, bot: Bot) -> None:
-    if not await ensure_user_started_callback(call, db):
-        return
     inline_id = call.inline_message_id
     if not inline_id:
         return
     lobby = next((l for l in lobbies.values() if l.inline_message_id == inline_id), None)
     if not lobby:
         await call.answer("بازی پیدا نشد. Inline Feedback را در BotFather روی 100% بگذار و دوباره تلاش کن.", show_alert=False)
+        return
+    if not await ensure_user_started_callback(call, db, lobby.starter_id):
         return
     await join_lobby(call, db, bot, lobby)
 
@@ -663,11 +664,11 @@ async def inline_start_game(call: CallbackQuery, db: Database, bot: Bot) -> None
 
 @router.callback_query(F.data.startswith("gquiz:join:"))
 async def group_join(call: CallbackQuery, db: Database, bot: Bot) -> None:
-    if not await ensure_user_started_callback(call, db):
-        return
     lobby_id = call.data.split(":", 2)[2]
     lobby = lobbies.get(lobby_id)
     if lobby:
+        if not await ensure_user_started_callback(call, db, lobby.starter_id):
+            return
         await join_lobby(call, db, bot, lobby)
 
 
@@ -881,6 +882,7 @@ async def finish_group_game(bot: Bot, db: Database, game: GroupGame) -> None:
         if task and not task.done():
             task.cancel()
     await db.log_group_game('quiz', game.lobby.chat_id, game.lobby.inline_message_id, len(game.lobby.players), len(game.questions))
+    await db.activate_referrals_for_players(list(game.lobby.players.keys()))
     if game.lobby.chat_id:
         for _, mention, old_level, new_level, title_text in levelups:
             await notify_levelup_in_group(bot, game.lobby.chat_id, mention, old_level, new_level, title_text)
@@ -892,11 +894,6 @@ async def finish_group_game(bot: Bot, db: Database, game: GroupGame) -> None:
 @router.callback_query(F.data == "group_duel_accept")
 async def group_duel_accept(call: CallbackQuery, bot: Bot, db: Database) -> None:
     try:
-        if not await ensure_user_started_callback(call, db):
-            return
-        if not await require_registered_and_join(call, db, bot):
-            return
-        await call.answer()
         inline_id = call.inline_message_id
         if not inline_id:
             await call.answer("این دکمه فقط برای inline duel است", show_alert=False)
@@ -908,6 +905,11 @@ async def group_duel_accept(call: CallbackQuery, bot: Bot, db: Database) -> None
             lobby.players[call.from_user.id] = call.from_user.full_name
             lobby.usernames[call.from_user.id] = call.from_user.username
             lobbies[lobby_id] = lobby
+        if not await ensure_user_started_callback(call, db, lobby.starter_id):
+            return
+        if not await require_registered_and_join(call, db, bot):
+            return
+        await call.answer()
         if call.from_user.id == lobby.starter_id:
             await call.answer("خودت نمی‌تونی حریف خودت بشی", show_alert=False)
             return
@@ -1099,6 +1101,7 @@ async def finish_group_duel(bot: Bot, db: Database, game: GroupDuelGame) -> None
     completed_group_duels[game.lobby.lobby_id] = game
     await edit_lobby(bot, game.lobby, text, group_finished_keyboard(game.lobby.lobby_id, "gdreport"))
     await db.log_group_game('duel', game.lobby.chat_id, game.lobby.inline_message_id, len(game.lobby.players), len(game.questions))
+    await db.activate_referrals_for_players(list(game.lobby.players.keys()))
     group_duels.pop(game.lobby.lobby_id, None)
     lobbies.pop(game.lobby.lobby_id, None)
     group_duel_genres.pop(game.lobby.lobby_id, None)
@@ -1154,7 +1157,7 @@ def _report_game_by_prefix(prefix: str, game_id: str):
 
 
 @router.callback_query(F.data.startswith(("gqreport:menu:", "gdreport:menu:")))
-async def group_report_menu(call: CallbackQuery) -> None:
+async def group_report_menu(call: CallbackQuery, bot: Bot) -> None:
     await call.answer()
     try:
         prefix, _, game_id = call.data.split(":", 2)
@@ -1162,12 +1165,27 @@ async def group_report_menu(call: CallbackQuery) -> None:
         if not game:
             await call.answer("گزارش برای این بازی پیدا نشد", show_alert=True)
             return
+        lines = ["📋 سوالات و جواب‌های این بازی:"]
+        for i, q in enumerate(game.questions, 1):
+            opts = [q['option1'], q['option2'], q['option3'], q['option4']]
+            correct = opts[int(q['correct_option']) - 1]
+            lines.append(f"\n{i}. {q['text']}\n✅ جواب: {correct}")
+        lines.append("\nبرای گزارش مشکل، شماره سوال را از دکمه‌های زیر انتخاب کن.")
+        await bot.send_message(
+            call.from_user.id,
+            "\n".join(lines),
+            reply_markup=group_report_questions_keyboard(game_id, len(game.questions), prefix),
+        )
         if call.message:
-            await call.message.answer("کدام سوال مشکل داشت؟", reply_markup=group_report_questions_keyboard(game_id, len(game.questions), prefix))
+            await call.message.answer("گزارش و جواب‌ها در پی‌وی ربات برای شما ارسال شد.")
         else:
-            await call.answer("برای گزارش، یکی از شماره سوال‌ها را انتخاب کن", show_alert=True)
+            await call.answer("گزارش و جواب‌ها در پی‌وی ارسال شد", show_alert=True)
     except Exception:
         logger.exception("Group report menu failed")
+        try:
+            await call.answer("برای دریافت گزارش، اول ربات را در پی‌وی استارت کنید", show_alert=True, url="https://t.me/ChalleshinoBot?start=from_report")
+        except Exception:
+            pass
 
 
 @router.callback_query(F.data.startswith(("gqreport:q:", "gdreport:q:")))
