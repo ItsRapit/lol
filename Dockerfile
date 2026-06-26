@@ -5,8 +5,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
-COPY requirements.txt .
+COPY quiz_duel_bot/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
-COPY app ./app
+COPY quiz_duel_bot/app ./app
 RUN mkdir -p /data
 CMD ["python", "-m", "app.main"]
