@@ -8,6 +8,7 @@ from aiogram.fsm.context import FSMContext
 from app.db import Database, now_iso
 from app.keyboards import (
     admin_panel, settings_keyboard, user_admin_keyboard, main_menu, cancel_keyboard,
+    admin_settings_categories_keyboard, admin_settings_list_keyboard, setting_label,
     admin_shop_types_keyboard, admin_shop_packages_keyboard, admin_shop_edit_keyboard,
     admin_leagues_keyboard, admin_league_edit_keyboard, admin_discounts_keyboard,
     discount_kind_keyboard, question_manage_keyboard, question_genres_keyboard, pending_questions_keyboard,
@@ -620,7 +621,7 @@ async def admin_callback(call: CallbackQuery, db: Database, state: FSMContext, b
                 f"• ثبت‌شده توسط ادمین: {s['admin_questions']}"
             )
         elif action == 'settings':
-            await call.message.answer("برای ویرایش روی تنظیم کلیک کنید:", reply_markup=settings_keyboard(await db.all_settings()))
+            await call.message.answer("⚙️ تنظیمات ربات\nیک بخش را انتخاب کن:", reply_markup=admin_settings_categories_keyboard())
         elif action == 'user_search':
             await state.set_state(AdminFlow.waiting_user_id)
             await call.message.answer("آیدی عددی کاربر را بفرست:", reply_markup=cancel_keyboard())
@@ -747,17 +748,41 @@ async def bulk_questions_receive(message: Message, db: Database, state: FSMConte
         await message.answer("خطا در افزودن Bulk سوال.")
 
 
+@router.callback_query(F.data.startswith("settings_cat:"))
+async def settings_category_callback(call: CallbackQuery, db: Database) -> None:
+    try:
+        if not await require_admin_call(call, db):
+            return
+        category = call.data.split(":", 1)[1]
+        await call.message.edit_text(
+            "⚙️ تنظیمات\nبرای ویرایش روی گزینه موردنظر بزن:",
+            reply_markup=admin_settings_list_keyboard(await db.all_settings(), category),
+        )
+        await call.answer()
+    except Exception:
+        logger.exception("Settings category failed")
+        await call.answer("خطا", show_alert=True)
+
+
 @router.callback_query(F.data.startswith("set:"))
 async def setting_pick(call: CallbackQuery, db: Database, state: FSMContext) -> None:
     try:
         if not await require_admin_call(call, db):
             return
         await state.clear()
-        key = call.data.split(":", 1)[1]
+        parts = call.data.split(":", 2)
+        key = parts[1]
+        category = parts[2] if len(parts) > 2 else ""
         val = await db.get_setting(key)
         await state.set_state(AdminFlow.waiting_setting_value)
-        await state.update_data(setting_key=key)
-        await call.message.answer(f"مقدار جدید برای <code>{key}</code> را بفرست. مقدار فعلی: <code>{val}</code>", reply_markup=cancel_keyboard())
+        await state.update_data(setting_key=key, setting_category=category)
+        await call.message.answer(
+            f"ویرایش تنظیم: <b>{setting_label(key)}</b>\n"
+            f"کلید فنی: <code>{key}</code>\n\n"
+            f"مقدار فعلی:\n<code>{val}</code>\n\n"
+            "مقدار جدید را بفرست:",
+            reply_markup=cancel_keyboard(),
+        )
         await call.answer()
     except Exception:
         logger.exception("Setting pick failed")
@@ -772,8 +797,15 @@ async def setting_value(message: Message, db: Database, state: FSMContext) -> No
         data = await state.get_data()
         await db.set_setting(data['setting_key'], message.text.strip())
         await db.log_admin(message.from_user.id, "setting_update", data['setting_key'], message.text.strip())
+        category = data.get('setting_category') or ""
         await state.clear()
-        await message.answer("تنظیم ذخیره شد.", reply_markup=main_menu(True))
+        if category:
+            await message.answer(
+                "✅ تنظیم ذخیره شد.\n\nبرای ادامه، یکی از گزینه‌های همین بخش را انتخاب کن:",
+                reply_markup=admin_settings_list_keyboard(await db.all_settings(), category),
+            )
+        else:
+            await message.answer("✅ تنظیم ذخیره شد.", reply_markup=admin_settings_categories_keyboard())
     except Exception:
         logger.exception("Setting save failed")
         await message.answer("خطا در ذخیره تنظیم.")

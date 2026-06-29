@@ -35,7 +35,6 @@ def duel_menu(random_cost: int = 5, friendly_cost: int = 20) -> InlineKeyboardMa
     b = InlineKeyboardBuilder()
     b.button(text=f"🎲 دوئل شانسی — {random_cost} سکه", callback_data="duel:random")
     b.button(text=f"🤝 دعوت دوست — {friendly_cost} سکه", callback_data="duel:invite")
-    b.button(text="↩️ برگشت", callback_data="nav:home")
     b.adjust(1)
     return b.as_markup()
 
@@ -77,7 +76,6 @@ def leaderboard_basis_keyboard() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="بر اساس سطح", callback_data="lb_basis:level")
     b.button(text="بر اساس لیگ", callback_data="lb_basis:league")
-    b.button(text="↩️ برگشت", callback_data="nav:home")
     b.adjust(1)
     return b.as_markup()
 
@@ -96,7 +94,6 @@ def shop_sections_keyboard() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="🪙 بسته‌های سکه", callback_data="shop_section:coins")
     b.button(text="⭐ بسته‌های سطح/XP", callback_data="shop_section:xp")
-    b.button(text="↩️ برگشت", callback_data="nav:home")
     b.adjust(1)
     return b.as_markup()
 
@@ -455,4 +452,138 @@ def rematch_keyboard(requester_id: int) -> InlineKeyboardMarkup:
     b.button(text="✅ قبول", callback_data=f"rematch_accept:{requester_id}")
     b.button(text="❌ رد", callback_data=f"rematch_decline:{requester_id}")
     b.adjust(2)
+    return b.as_markup()
+
+# --- Persian settings panel ---
+SETTING_LABELS = {
+    "duel_question_count": "تعداد سوال دوئل",
+    "question_timer_seconds": "زمان پاسخ هر سوال",
+    "genres_to_offer": "تعداد ژانر پیشنهادی",
+    "genres_to_choose": "تعداد ژانر انتخابی",
+    "random_duel_cost": "هزینه دوئل شانسی",
+    "friendly_duel_cost": "هزینه دوئل دوستانه",
+    "matchmaking_timeout_seconds": "زمان انتظار صف شانسی",
+    "genre_selection_timeout_seconds": "مهلت انتخاب ژانر",
+    "inactive_forfeit_penalty_coins": "جریمه بی‌پاسخی",
+    "reward_coin_per_correct": "سکه هر پاسخ درست",
+    "reward_xp_per_correct": "ایکس‌پی هر پاسخ درست",
+    "random_duel_win_coin_bonus": "جایزه برد دوئل شانسی",
+    "winner_bonus_xp": "ایکس‌پی برد",
+    "duel_draw_coin_reward": "جایزه مساوی",
+    "initial_signup_coins": "سکه شروع ثبت‌نام",
+    "question_approval_reward_coins": "پاداش تایید سوال",
+    "referral_referrer_coins": "رفرال دعوت‌کننده: سکه",
+    "referral_referrer_xp": "رفرال دعوت‌کننده: ایکس‌پی",
+    "referral_referred_coins": "رفرال دعوت‌شونده: سکه",
+    "referral_referred_xp": "رفرال دعوت‌شونده: ایکس‌پی",
+    "streak_day_1_coins": "کمک روزانه 1",
+    "streak_day_2_coins": "کمک روزانه 2",
+    "streak_day_3_coins": "کمک روزانه 3",
+    "streak_day_4_coins": "کمک روزانه 4",
+    "streak_day_5_coins": "کمک روزانه 5",
+    "streak_day_6_coins": "کمک روزانه 6",
+    "streak_day_7_coins": "کمک روزانه 7",
+    "powerup_remove2_cost": "هزینه حذف دو گزینه",
+    "powerup_auto_answer_cost": "هزینه جواب خودکار",
+    "powerup_max_uses_per_duel": "حداکثر استفاده پاورآپ",
+    "group_quiz_max_players": "حداکثر بازیکن گروهی",
+    "group_quiz_question_count": "تعداد سوال بازی گروهی",
+    "group_quiz_timer_seconds": "زمان سوال بازی گروهی",
+    "group_quiz_entry_cost": "هزینه ورود بازی گروهی",
+    "max_level": "حداکثر لول",
+    "xp_level_curve_factor": "ضریب منحنی ایکس‌پی قدیمی",
+    "genre_stats_min_answers": "حداقل پاسخ برای تحلیل ژانر",
+    "payment_card_number": "شماره کارت",
+    "payment_card_holder": "نام صاحب کارت",
+    "payment_method": "روش پرداخت",
+    "contact_admin_id": "آیدی پشتیبانی",
+    "welcome_text": "متن خوش‌آمدگویی",
+    "help_text": "متن راهنما",
+    "start_photo_file_id": "عکس استارت",
+    "maintenance_mode": "حالت تعمیر",
+    "maintenance_text": "متن حالت تعمیر",
+    "force_join_enabled": "جوین اجباری فعال",
+    "force_join_channel": "کانال جوین اجباری",
+    "admin_review_channel_id": "کانال بررسی ادمین",
+    "reports_channel_id": "کانال گزارش‌ها",
+    "question_filter_words": "کلمات فیلتر سوال",
+    "daily_question_limit": "سقف ثبت سوال روزانه",
+    "visual_timer_enabled": "تایمر نمایشی",
+    "visual_timer_interval_seconds": "فاصله ادیت تایمر",
+    "fast_bonus_xp_0_5": "بونوس سرعت 0 تا 5 ثانیه",
+    "fast_bonus_xp_5_10": "بونوس سرعت 5 تا 10 ثانیه",
+    "question_auto_disable_reports": "غیرفعال‌سازی خودکار گزارش",
+}
+
+SETTING_CATEGORIES = {
+    "duel": ("⚔️ تنظیمات دوئل", [
+        "duel_question_count", "question_timer_seconds", "genres_to_offer", "genres_to_choose",
+        "random_duel_cost", "friendly_duel_cost", "matchmaking_timeout_seconds",
+        "genre_selection_timeout_seconds", "inactive_forfeit_penalty_coins",
+    ]),
+    "rewards": ("🎁 جوایز و اقتصاد بازی", [
+        "reward_coin_per_correct", "reward_xp_per_correct", "random_duel_win_coin_bonus",
+        "winner_bonus_xp", "duel_draw_coin_reward", "initial_signup_coins",
+        "question_approval_reward_coins",
+    ]),
+    "powerups": ("🔋 پاورآپ‌ها", [
+        "powerup_remove2_cost", "powerup_auto_answer_cost", "powerup_max_uses_per_duel",
+    ]),
+    "referral": ("👥 رفرال و کمک روزانه", [
+        "referral_referrer_coins", "referral_referrer_xp", "referral_referred_coins", "referral_referred_xp",
+        "streak_day_1_coins", "streak_day_2_coins", "streak_day_3_coins", "streak_day_4_coins",
+        "streak_day_5_coins", "streak_day_6_coins", "streak_day_7_coins",
+    ]),
+    "group": ("🎮 بازی گروهی", [
+        "group_quiz_max_players", "group_quiz_question_count", "group_quiz_timer_seconds", "group_quiz_entry_cost",
+    ]),
+    "level": ("🏆 لول، لیگ و تحلیل", [
+        "max_level", "xp_level_curve_factor", "genre_stats_min_answers",
+    ]),
+    "shop": ("🛒 فروشگاه و پرداخت", [
+        "payment_card_number", "payment_card_holder", "payment_method",
+    ]),
+    "texts": ("📝 متن‌ها و پیام‌ها", [
+        "welcome_text", "help_text", "maintenance_text", "contact_admin_id",
+    ]),
+    "system": ("🛠 سیستم و امنیت", [
+        "maintenance_mode", "force_join_enabled", "force_join_channel", "start_photo_file_id",
+        "admin_review_channel_id", "reports_channel_id", "question_filter_words", "daily_question_limit",
+    ]),
+}
+
+
+def setting_label(key: str) -> str:
+    return SETTING_LABELS.get(key, key)
+
+
+def admin_settings_categories_keyboard() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for cat, (title, _keys) in SETTING_CATEGORIES.items():
+        b.button(text=title, callback_data=f"settings_cat:{cat}")
+    b.button(text="📦 سایر تنظیمات", callback_data="settings_cat:other")
+    b.button(text="🔙 برگشت", callback_data="admin:back")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def admin_settings_list_keyboard(settings, category: str) -> InlineKeyboardMarkup:
+    rows = list(settings)
+    by_key = {s['key']: s for s in rows}
+    used = {k for _cat, (_title, keys) in SETTING_CATEGORIES.items() for k in keys}
+    if category == "other":
+        selected = [s for s in rows if s['key'] not in used]
+        title = "سایر تنظیمات"
+    else:
+        keys = SETTING_CATEGORIES.get(category, ("", []))[1]
+        selected = [by_key[k] for k in keys if k in by_key]
+        title = SETTING_CATEGORIES.get(category, ("تنظیمات", []))[0]
+    b = InlineKeyboardBuilder()
+    for s in selected:
+        value = str(s['value'])
+        if len(value) > 28:
+            value = value[:28] + "..."
+        b.button(text=f"{setting_label(s['key'])}: {value}", callback_data=f"set:{s['key']}:{category}")
+    b.button(text="🔙 دسته‌بندی تنظیمات", callback_data="admin:settings")
+    b.adjust(1)
     return b.as_markup()

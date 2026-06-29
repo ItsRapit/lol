@@ -120,7 +120,7 @@ async def nav_home(call: CallbackQuery, state: FSMContext, db: Database) -> None
 async def profile(message: Message, db: Database) -> None:
     try:
         await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
-        await message.answer(await build_profile_text(db, message.from_user.id), reply_markup=back_home_keyboard())
+        await message.answer(await build_profile_text(db, message.from_user.id), reply_markup=ReplyKeyboardRemove())
     except Exception:
         logger.exception("Profile failed")
         await message.answer("خطا در نمایش پروفایل.")
@@ -209,13 +209,13 @@ async def referral(message: Message, db: Database, bot_username: str) -> None:
         "🎁 لینک دعوت اختصاصی شما:\n"
         f"{link}\n\n"
         f"اگر دوستت با لینک تو وارد بشه و اولین دوئلش رو بازی کنه، تو <b>{rc} سکه و {rx} XP</b> می‌گیری، اون هم <b>{nc} سکه و {nx} XP</b> هدیه می‌گیره.",
-        reply_markup=back_home_keyboard(),
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
 @router.message(F.text == "🏰 کلن (به‌زودی)")
 async def clan_placeholder(message: Message) -> None:
-    await message.answer("🏰 قابلیت کلن به‌زودی اضافه می‌شود.", reply_markup=back_home_keyboard())
+    await message.answer("🏰 قابلیت کلن به‌زودی اضافه می‌شود.", reply_markup=ReplyKeyboardRemove())
 
 
 @router.callback_query(F.data == "check_force_join")
