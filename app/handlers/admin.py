@@ -218,7 +218,7 @@ async def upload_backup_start(message: Message, db: Database, state: FSMContext)
         if not await require_admin_message(message, db):
             return
         await state.set_state(AdminFlow.waiting_backup_upload)
-        await message.answer("فایل بک‌آپ (.json یا .sqlite/db) را همین‌جا ارسال کن تا روی Volume کنار دیتابیس ذخیره شود.", reply_markup=cancel_keyboard())
+        await message.answer("فایل دیتابیس SQLite بک‌آپ را بفرست تا روی دیتابیس فعلی اعمال شود. پسوندهای قابل ریستور: .sqlite / .sqlite3 / .db / .backup", reply_markup=cancel_keyboard())
     except Exception:
         logger.exception("Upload backup start failed")
         await message.answer("خطا.")
@@ -242,11 +242,37 @@ async def upload_backup_receive(message: Message, db: Database, state: FSMContex
         downloaded = await bot.download_file(file.file_path)
         dest.write_bytes(downloaded.read())
         await db.log_admin(message.from_user.id, "upload_backup", details=str(dest))
+
+        suffixes = {".db", ".sqlite", ".sqlite3", ".backup"}
+        if dest.suffix.lower() in suffixes:
+            safety_backup = await db.backup_copy()
+            result = await db.restore_from_sqlite_file(str(dest), admin_id=message.from_user.id)
+            await db.log_admin(
+                message.from_user.id,
+                "restore_sqlite_backup",
+                details=f"source={dest}; safety={safety_backup}; result={result}",
+            )
+            await state.clear()
+            await message.answer(
+                "✅ بک‌آپ SQLite روی دیتابیس فعلی اعمال شد.\n\n"
+                f"👥 کاربران قبل از ریستور: {result['before_users']}\n"
+                f"👥 کاربران داخل فایل: {result['source_users']}\n"
+                f"👥 کاربران بعد از ریستور: {result['after_users']}\n\n"
+                f"🛡 بک‌آپ ایمنی قبل از ریستور هم ذخیره شد:\n<code>{safety_backup}</code>\n\n"
+                "اگر بعد از ریستور موردی عجیب دیدی، سرویس Railway را یک بار Restart کن.",
+                reply_markup=main_menu(True),
+            )
+            return
+
         await state.clear()
-        await message.answer(f"✅ فایل بک‌آپ روی Volume ذخیره شد:\n<code>{dest}</code>", reply_markup=main_menu(True))
-    except Exception:
-        logger.exception("Upload backup receive failed")
-        await message.answer("خطا در ذخیره فایل بک‌آپ.")
+        await message.answer(
+            f"✅ فایل بک‌آپ روی Volume ذخیره شد، اما چون SQLite نبود فقط ذخیره شد و روی دیتابیس اعمال نشد:\n<code>{dest}</code>\n\n"
+            "برای ریستور کامل، فایل دیتابیس با پسوند .sqlite / .sqlite3 / .db / .backup بفرست.",
+            reply_markup=main_menu(True),
+        )
+    except Exception as e:
+        logger.exception("Upload/restore backup failed")
+        await message.answer(f"❌ خطا در ذخیره یا ریستور بک‌آپ: {e}")
 
 
 @router.message(Command("version"))
@@ -553,7 +579,7 @@ async def admin_callback(call: CallbackQuery, db: Database, state: FSMContext, b
             await call.message.answer("افزودن دستی از منوی کاربر «ثبت سوال» یا Bulk استفاده کن.")
         elif action == 'upload_backup':
             await state.set_state(AdminFlow.waiting_backup_upload)
-            await call.message.answer("فایل بک‌آپ را ارسال کن تا روی Volume ذخیره شود.", reply_markup=cancel_keyboard())
+            await call.message.answer("فایل دیتابیس SQLite بک‌آپ را ارسال کن تا روی دیتابیس فعلی اعمال شود.", reply_markup=cancel_keyboard())
         elif action == 'backup_questions':
             path = await db.export_section_backup('questions'); await call.message.answer_document(FSInputFile(path), caption='بک‌آپ سوالات')
         elif action == 'backup_users':

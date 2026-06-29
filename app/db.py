@@ -1435,6 +1435,42 @@ class Database:
         Path(dest).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
         return dest
 
+
+    async def restore_from_sqlite_file(self, source_path: str, admin_id: int | None = None) -> dict[str, int]:
+        """Restore a full SQLite backup into the currently running DB connection.
+
+        This uses SQLite's backup API instead of replacing the file under an open
+        connection, so Railway volume restores are applied immediately and safely.
+        """
+        source = Path(source_path)
+        if not source.exists() or source.stat().st_size == 0:
+            raise ValueError("Backup file is empty or missing")
+
+        async with aiosqlite.connect(str(source), timeout=30) as src:
+            src.row_factory = aiosqlite.Row
+            row = await src.execute_fetchall("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+            if not row:
+                raise ValueError("این فایل دیتابیس معتبر چالشینو نیست؛ جدول users پیدا نشد")
+            before_row = await self.fetchone("SELECT COUNT(*) c FROM users")
+            before_users = int(before_row['c'] if before_row else 0)
+            src_user_row = await src.execute_fetchall("SELECT COUNT(*) c FROM users")
+            source_users = int(src_user_row[0]['c'] if src_user_row else 0)
+            async with self._write_lock:
+                await src.backup(self.conn)
+                await self.conn.commit()
+
+        # Bring older backups forward to the current schema and defaults.
+        await self.migrate_existing_schema()
+        await self.seed_defaults()
+        if admin_id:
+            await self.execute_write(
+                "INSERT OR REPLACE INTO admins(telegram_id,role,added_by,created_at) VALUES(?,?,?,?)",
+                (admin_id, 'owner', admin_id, now_iso()),
+            )
+        after_row = await self.fetchone("SELECT COUNT(*) c FROM users")
+        after_users = int(after_row['c'] if after_row else 0)
+        return {"before_users": before_users, "source_users": source_users, "after_users": after_users}
+
     async def backup_copy(self) -> str:
         dest = f"{self.path}.{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.backup"
         async with self._write_lock:
