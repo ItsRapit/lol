@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from app.db import Database
-from app.utils import xp_progress_text, league_with_emoji, rank_with_emoji
-from app.time_utils import jalali_date, jalali_datetime
+from app.utils import league_with_emoji, rank_with_emoji
 
 
 def xp_bar(current_xp: int, required_xp: int) -> str:
@@ -10,7 +9,13 @@ def xp_bar(current_xp: int, required_xp: int) -> str:
     return "▰" * filled + "▱" * (10 - filled)
 
 
-async def build_profile_text(db: Database, telegram_id: int) -> str:
+async def build_profile_text(
+    db: Database,
+    telegram_id: int,
+    show_username: bool = True,
+    show_xp: bool = True,
+    show_coins: bool = True,
+) -> str:
     u = await db.get_user(telegram_id)
     if not u:
         return "پروفایل پیدا نشد."
@@ -26,7 +31,7 @@ async def build_profile_text(db: Database, telegram_id: int) -> str:
     cur, nxt = await db.level_bounds(u['level'])
     current_xp = max(0, int(u['xp']) - int(cur))
     required_xp = max(1, int(nxt) - int(cur))
-    username = f"@{u['username']}" if u['username'] else ""
+    username = f"@{u['username']}" if (show_username and u['username']) else ""
     total_duels = int(u['wins']) + int(u['losses']) + int(u['draws'])
     wrong = max(0, int(u['total_answers']) - int(u['correct_answers']))
 
@@ -34,7 +39,7 @@ async def build_profile_text(db: Database, telegram_id: int) -> str:
     league_pos = await db.leaderboard_user_position(telegram_id, "league", "all")
     positions = ""
     if level_pos or league_pos:
-        positions = "\n" + " | ".join(
+        positions = " | ".join(
             part for part in [
                 f"📍 رتبه سطح: #{level_pos['rank']}" if level_pos else "",
                 f"🏆 رتبه لیگ: #{league_pos['rank']}" if league_pos else "",
@@ -53,14 +58,20 @@ async def build_profile_text(db: Database, telegram_id: int) -> str:
         if weaknesses:
             genre_analysis += f"\n\n⚠️ نقاط ضعف:\n{weaknesses}"
 
-    return (
-        f"👤 <b>{u['first_name'] or 'کاربر'}</b> {username}\n"
-        f"{title_text} | لول {u['level']}\n"
-        f"ایکس‌پی {current_xp}/{required_xp} {xp_bar(current_xp, required_xp)}\n"
-        f"🏆 {league_name} — {u['cups']} جام\n"
-        f"🪙 سکه: {u['coins']}"
-        f"{positions}\n\n"
-        f"⚔️ دوئل‌ها: {total_duels} | برد {u['wins']} / مساوی {u['draws']} / شکست {u['losses']}\n"
-        f"✅ پاسخ صحیح: {u['correct_answers']} | ❌ پاسخ غلط: {wrong}"
-        f"{genre_analysis}"
-    )
+    lines = [
+        f"👤 <b>{u['first_name'] or 'کاربر'}</b> {username}".rstrip(),
+        f"{title_text} | لول {u['level']}",
+    ]
+    if show_xp:
+        lines.append(f"ایکس‌پی {current_xp}/{required_xp} {xp_bar(current_xp, required_xp)}")
+    lines.append(f"🏆 {league_name} — {u['cups']} جام")
+    if show_coins:
+        lines.append(f"🪙 سکه: {u['coins']}")
+    if positions:
+        lines.append(positions)
+    lines.extend([
+        "",
+        f"⚔️ دوئل‌ها: {total_duels} | برد {u['wins']} / مساوی {u['draws']} / شکست {u['losses']}",
+        f"✅ پاسخ صحیح: {u['correct_answers']} | ❌ پاسخ غلط: {wrong}",
+    ])
+    return "\n".join(lines) + genre_analysis

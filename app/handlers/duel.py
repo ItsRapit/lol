@@ -85,8 +85,11 @@ async def random_duel(call: CallbackQuery, db: Database, bot: Bot) -> None:
             if task and not task.done():
                 task.cancel()
             await db.join_duel(waiting['id'], call.from_user.id)
-            await call.message.answer("حریف پیدا شد! انتخاب ژانر شروع شد.")
-            await bot.send_message(waiting['player1_id'], "حریف پیدا شد! انتخاب ژانر شروع شد.")
+            p1 = await db.get_user(waiting['player1_id'])
+            p1_name = (p1['first_name'] or p1['username'] or str(waiting['player1_id'])) if p1 else str(waiting['player1_id'])
+            p2_name = call.from_user.first_name or str(call.from_user.id)
+            await call.message.answer(f"حریف پیدا شد: {p1_name}\nانتخاب ژانر شروع شد.")
+            await bot.send_message(waiting['player1_id'], f"حریف پیدا شد: {p2_name}\nانتخاب ژانر شروع شد.")
             await offer_genres(waiting['id'], db, bot)
         else:
             duel_id = await db.create_waiting_duel(call.from_user.id)
@@ -345,7 +348,11 @@ async def send_current_question(duel_id: int, db: Database, bot: Bot) -> None:
             return
         timer = await db.get_int('question_timer_seconds', 15)
         rt.question_started_at = time.monotonic()
-        text = f"سوال {seq + 1}\nID: <code>{q['id']}</code>\n\n{q['text']}"
+        p1 = await db.get_user(duel['player1_id'])
+        p2 = await db.get_user(duel['player2_id'])
+        p1_name = (p1['first_name'] or p1['username'] or str(duel['player1_id'])) if p1 else str(duel['player1_id'])
+        p2_name = (p2['first_name'] or p2['username'] or str(duel['player2_id'])) if p2 else str(duel['player2_id'])
+        text = f"⚔️ {p1_name} vs {p2_name}\n\nسوال {seq + 1}\nID: <code>{q['id']}</code>\n\n{q['text']}"
         for uid in [duel['player1_id'], duel['player2_id']]:
             costs = await db.powerup_costs_for_user(duel_id, uid)
             markup = question_keyboard(duel_id, q['id'], options_from_question(q), cost_remove2=costs['remove2'], cost_auto=costs['auto'])
@@ -786,7 +793,7 @@ async def opponent_profile_callback(call: CallbackQuery, db: Database) -> None:
     await call.answer()
     try:
         uid = int(call.data.split(":")[1])
-        await call.message.answer(await build_profile_text(db, uid))
+        await call.message.answer(await build_profile_text(db, uid, show_username=False, show_xp=False, show_coins=False))
     except Exception:
         logger.exception("Opponent profile failed")
         await call.message.answer("خطا در نمایش پروفایل حریف.")

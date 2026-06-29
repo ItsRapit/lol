@@ -769,9 +769,6 @@ async def group_answer(call: CallbackQuery, db: Database, bot: Bot) -> None:
     q = game.questions[idx]
     result_text = "✅ پاسخ شما صحیح بود." if opt == int(q['correct_option']) else "❌ پاسخ شما اشتباه بود."
     await call.answer(result_text, show_alert=False)
-    remaining = game.remaining.get(idx, game.lobby.timer_seconds)
-    total_seconds = game.lobby.timer_seconds
-    await edit_lobby(bot, game.lobby, group_question_text(game, idx, remaining, total_seconds), answer_keyboard(lobby_id, idx, q))
     if len(game.answered[idx]) >= total:
         task = game.timer_tasks.get(idx)
         if task and not task.done():
@@ -1176,7 +1173,7 @@ async def group_report_menu(call: CallbackQuery, bot: Bot) -> None:
             reply_markup=group_report_questions_keyboard(game_id, len(game.questions), prefix),
         )
         if call.message:
-            await call.message.answer("گزارش و جواب‌ها در پی‌وی ربات برای شما ارسال شد.")
+            await call.message.answer("تو پی‌وی فرستادم برات")
         else:
             await call.answer("گزارش و جواب‌ها در پی‌وی ارسال شد", show_alert=True)
     except Exception:
