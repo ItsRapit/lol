@@ -8,7 +8,7 @@ MAIN_MENU_TEXTS = {
 CANCEL_TEXT = "↩️ انصراف / برگشت"
 
 
-def main_menu(is_admin: bool = False) -> ReplyKeyboardMarkup:
+def main_menu(is_admin: bool = False, one_time_keyboard: bool = True) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(text="⚔️ دوئل")],
         [KeyboardButton(text="🛒 فروشگاه"), KeyboardButton(text="🏆 لیدربورد")],
@@ -18,7 +18,7 @@ def main_menu(is_admin: bool = False) -> ReplyKeyboardMarkup:
     ]
     if is_admin:
         rows.append([KeyboardButton(text="🛡 پنل ادمین")])
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, one_time_keyboard=True)
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, one_time_keyboard=one_time_keyboard)
 
 
 def cancel_keyboard() -> ReplyKeyboardMarkup:
