@@ -105,7 +105,7 @@ async def q_genre(message: Message, db: Database, state: FSMContext, bot: Bot, a
 
 @router.callback_query(F.data.startswith("qrev:"))
 async def q_review(call: CallbackQuery, db: Database, bot: Bot) -> None:
-    logger.info("Question review callback received: data=%s from=%s chat=%s", call.data, call.from_user.id if call.from_user else None, call.message.chat.type if call.message else None)
+    logger.debug("Question review callback received: data=%s from=%s chat=%s", call.data, call.from_user.id if call.from_user else None, call.message.chat.type if call.message else None)
     try:
         if not await db.is_admin(call.from_user.id):
             await call.answer("دسترسی ندارید.", show_alert=True); return

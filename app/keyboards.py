@@ -2,18 +2,19 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardBu
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 MAIN_MENU_TEXTS = {
-    "⚔️ دوئل", "🏆 لیدربورد", "🛒 فروشگاه", "👤 پروفایل",
-    "➕ ثبت سوال", "🎁 رفرال", "🛡 پنل ادمین", "🏰 کلن (به‌زودی)",
+    "🎯 کوئست روزانه", "⚔️ دوئل", "🏆 لیدربورد", "🛒 فروشگاه", "👤 پروفایل",
+    "➕ ثبت سوال", "🎁 رفرال", "🛡 پنل ادمین",
 }
 CANCEL_TEXT = "↩️ انصراف / برگشت"
 
 
 def main_menu(is_admin: bool = False, one_time_keyboard: bool = True) -> ReplyKeyboardMarkup:
     rows = [
+        [KeyboardButton(text="🎯 کوئست روزانه")],
         [KeyboardButton(text="⚔️ دوئل")],
         [KeyboardButton(text="🛒 فروشگاه"), KeyboardButton(text="🏆 لیدربورد")],
         [KeyboardButton(text="👤 پروفایل"), KeyboardButton(text="➕ ثبت سوال")],
-        [KeyboardButton(text="🎁 رفرال"), KeyboardButton(text="🏰 کلن (به‌زودی)")],
+        [KeyboardButton(text="🎁 رفرال")],
         [KeyboardButton(text="📞 تماس"), KeyboardButton(text="📘 راهنما")],
     ]
     if is_admin:
@@ -31,10 +32,19 @@ def back_home_keyboard() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def duel_menu(random_cost: int = 5, friendly_cost: int = 20) -> InlineKeyboardMarkup:
+def duel_menu(random_cost: int = 5, bot_cost: int = 3) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text=f"🎲 دوئل شانسی — {random_cost} سکه", callback_data="duel:random")
-    b.button(text=f"🤝 دعوت دوست — {friendly_cost} سکه", callback_data="duel:invite")
+    b.button(text=f"🤖 دوئل با ربات — {bot_cost} سکه", callback_data="duel:bot")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def quests_keyboard(quests: list) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for q in quests:
+        if q['completed'] and not q['claimed']:
+            b.button(text=f"🎁 دریافت جایزه «{q['title']}»", callback_data=f"quest_claim:{q['id']}")
     b.adjust(1)
     return b.as_markup()
 
@@ -438,11 +448,12 @@ def submission_genre_keyboard(genres: list[str]) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def duel_finished_keyboard(duel_id: int, opponent_id: int) -> InlineKeyboardMarkup:
+def duel_finished_keyboard(duel_id: int, opponent_id: int, is_bot_opponent: bool = False) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="📋 گزارش و جواب‌ها", callback_data=f"duel_report_answers:{duel_id}")
-    b.button(text="👤 دیدن پروفایل حریف", callback_data=f"opponent_profile:{opponent_id}")
-    b.button(text="🔁 درخواست بازی مجدد", callback_data=f"rematch_request:{opponent_id}")
+    if not is_bot_opponent:
+        b.button(text="👤 دیدن پروفایل حریف", callback_data=f"opponent_profile:{opponent_id}")
+        b.button(text="🔁 درخواست بازی مجدد", callback_data=f"rematch_request:{opponent_id}")
     b.adjust(1)
     return b.as_markup()
 
@@ -461,7 +472,7 @@ SETTING_LABELS = {
     "genres_to_offer": "تعداد ژانر پیشنهادی",
     "genres_to_choose": "تعداد ژانر انتخابی",
     "random_duel_cost": "هزینه دوئل شانسی",
-    "friendly_duel_cost": "هزینه دوئل دوستانه",
+    "bot_duel_cost": "هزینه دوئل با ربات",
     "matchmaking_timeout_seconds": "زمان انتظار صف شانسی",
     "genre_selection_timeout_seconds": "مهلت انتخاب ژانر",
     "inactive_forfeit_penalty_coins": "جریمه بی‌پاسخی",
@@ -518,7 +529,7 @@ SETTING_LABELS = {
 SETTING_CATEGORIES = {
     "duel": ("⚔️ تنظیمات دوئل", [
         "duel_question_count", "question_timer_seconds", "genres_to_offer", "genres_to_choose",
-        "random_duel_cost", "friendly_duel_cost", "matchmaking_timeout_seconds",
+        "random_duel_cost", "bot_duel_cost", "matchmaking_timeout_seconds",
         "genre_selection_timeout_seconds", "inactive_forfeit_penalty_coins",
     ]),
     "rewards": ("🎁 جوایز و اقتصاد بازی", [

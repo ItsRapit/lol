@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -308,7 +309,31 @@ class Database:
                 questions_count INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 finished_at TEXT NOT NULL
-            )""", 
+            )""",
+            """CREATE TABLE IF NOT EXISTS quest_templates(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                goal_type TEXT NOT NULL,
+                goal_count INTEGER NOT NULL,
+                reward_coins INTEGER NOT NULL DEFAULT 0,
+                reward_xp INTEGER NOT NULL DEFAULT 0,
+                is_active INTEGER NOT NULL DEFAULT 1
+            )""",
+            """CREATE TABLE IF NOT EXISTS user_daily_quests(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                quest_template_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                progress INTEGER NOT NULL DEFAULT 0,
+                goal_count INTEGER NOT NULL,
+                completed INTEGER NOT NULL DEFAULT 0,
+                claimed INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                UNIQUE(user_id, quest_template_id, date)
+            )""",
+            "CREATE INDEX IF NOT EXISTS idx_user_daily_quests_lookup ON user_daily_quests(user_id, date)",
         ]
         async with self._write_lock:
             for sql in statements:
@@ -349,6 +374,10 @@ class Database:
         await self.add_column_if_missing("leagues", "main_league", "main_league TEXT")
         await self.add_column_if_missing("leagues", "tier", "tier INTEGER")
         await self.add_column_if_missing("leagues", "is_final", "is_final INTEGER NOT NULL DEFAULT 0")
+        await self.add_column_if_missing("users", "last_inactive_gift_at", "last_inactive_gift_at TEXT")
+        await self.add_column_if_missing("users", "last_quest_notify_at", "last_quest_notify_at TEXT")
+        await self.add_column_if_missing("duels", "opponent_type", "opponent_type TEXT NOT NULL DEFAULT 'human'")
+        await self.add_column_if_missing("duels", "bot_level", "bot_level INTEGER")
         await self.execute_write("UPDATE shop_packages SET package_type=CASE WHEN xp>0 AND coins=0 THEN 'xp' ELSE 'coins' END WHERE package_type IS NULL OR package_type='' OR package_type='coins'")
         for pkg in await self.fetchall("SELECT id,price_label FROM shop_packages WHERE price_amount=0"):
             amount = self.parse_price_amount(pkg["price_label"])
@@ -410,12 +439,12 @@ class Database:
             "referral_referred_xp": ("25", "New user XP reward"),
             "payment_card_number": ("0000-0000-0000-0000", "Shown in shop payment page"),
             "welcome_text": ("سلام! به ربات کوییز دوئلی خوش آمدی. از منوی پایین انتخاب کن:", "Editable /start welcome text"),
-            "help_text": ("🎮 راهنمای کامل ربات کوییز دوئلی\n\n━━━━━━━━━━━━━━━\n🕹 بازی\n━━━━━━━━━━━━━━━\n🎲 دوئل شانسی — با یه حریف تصادفی بازی کن (هزینه: {random_duel_cost} سکه)\n🤝 دعوت دوست — لینک دوئل بفرست برای دوستت (هزینه: {friendly_duel_cost} سکه)\nقبل از شروع هر دوئل، ژانر سوالات رو انتخاب می‌کنید. سوالات فقط از ژانرهایی میان که هر دو نفر انتخاب کردن.\n\n━━━━━━━━━━━━━━━\n🏆 رقابت\n━━━━━━━━━━━━━━━\nبا هر برد جام و XP می‌گیری و توی لیگ بالا می‌ری.\nلیگ‌ها: برنزی ← نقره‌ای ← طلایی ← الماسی ← اسطوره‌ای\nهر لیگ 3 تیر داره. هرچی لیگ بالاتر، باخت گرون‌تره!\n\n━━━━━━━━━━━━━━━\n🪙 سکه\n━━━━━━━━━━━━━━━\nبا بازی و برد سکه می‌گیری.\nتوی دوئل می‌تونی از پاورآپ استفاده کنی (با سکه).\nاز فروشگاه هم می‌تونی سکه بخری.\n{initial_signup_coins} سکه هدیه‌ی شروع برای همه!\n\n━━━━━━━━━━━━━━━\n🔥 استریک روزانه\n━━━━━━━━━━━━━━━\nکمک روزانه فقط در هفته اول فعاله. اگر هر روز وارد بشی، روزهای 1 تا 7 سکه می‌گیری.\nروز اول: {streak_day_1_coins} سکه | روز 7: {streak_day_7_coins} سکه\nاگر یک روز جا بندازی، استریک خاموش میشه.\n\n━━━━━━━━━━━━━━━\n👥 رفرال\n━━━━━━━━━━━━━━━\nلینک دعوتت رو از بخش رفرال بگیر.\nهر دوستی که با لینک تو بیاد و اولین دوئلش رو بازی کنه:\n• تو: {referral_referrer_coins} سکه + {referral_referrer_xp} XP\n• اون: {referral_referred_coins} سکه + {referral_referred_xp} XP هدیه\n\n━━━━━━━━━━━━━━━\n📋 سوال بده\n━━━━━━━━━━━━━━━\nمی‌تونی سوال جدید پیشنهاد بدی. بعد از تایید ادمین وارد بازی میشه.", "Editable /help text with placeholders"),
+            "help_text": ("🎮 راهنمای کامل ربات کوییز دوئلی\n\n━━━━━━━━━━━━━━━\n🕹 بازی\n━━━━━━━━━━━━━━━\n🎲 دوئل شانسی — با یه حریف تصادفی بازی کن (هزینه: {random_duel_cost} سکه)\n🤖 دوئل با ربات — همیشه در دسترسه، سطح ربات هر بار فرق می‌کنه (هزینه: {bot_duel_cost} سکه)\nقبل از شروع هر دوئل، ژانر سوالات رو انتخاب می‌کنید. سوالات فقط از ژانرهایی میان که هر دو نفر انتخاب کردن.\n\n━━━━━━━━━━━━━━━\n🎯 کوئست روزانه\n━━━━━━━━━━━━━━━\nهر روز ۳ کوئست جدید داری. کاملش کن و برو جایزه‌ت رو بگیر.\n\n━━━━━━━━━━━━━━━\n🏆 رقابت\n━━━━━━━━━━━━━━━\nبا هر برد جام و XP می‌گیری و توی لیگ بالا می‌ری.\nلیگ‌ها: برنزی ← نقره‌ای ← طلایی ← الماسی ← اسطوره‌ای\nهر لیگ 3 تیر داره. هرچی لیگ بالاتر، باخت گرون‌تره!\n\n━━━━━━━━━━━━━━━\n🪙 سکه\n━━━━━━━━━━━━━━━\nبا بازی و برد سکه می‌گیری.\nتوی دوئل می‌تونی از پاورآپ استفاده کنی (با سکه).\nاز فروشگاه هم می‌تونی سکه بخری.\n{initial_signup_coins} سکه هدیه‌ی شروع برای همه!\n\n━━━━━━━━━━━━━━━\n🔥 استریک روزانه\n━━━━━━━━━━━━━━━\nکمک روزانه فقط در هفته اول فعاله. اگر هر روز وارد بشی، روزهای 1 تا 7 سکه می‌گیری.\nروز اول: {streak_day_1_coins} سکه | روز 7: {streak_day_7_coins} سکه\nاگر یک روز جا بندازی، استریک خاموش میشه.\n\n━━━━━━━━━━━━━━━\n👥 رفرال\n━━━━━━━━━━━━━━━\nلینک دعوتت رو از بخش رفرال بگیر.\nهر دوستی که با لینک تو بیاد و اولین دوئلش رو بازی کنه:\n• تو: {referral_referrer_coins} سکه + {referral_referrer_xp} XP\n• اون: {referral_referred_coins} سکه + {referral_referred_xp} XP هدیه\n\n━━━━━━━━━━━━━━━\n📋 سوال بده\n━━━━━━━━━━━━━━━\nمی‌تونی سوال جدید پیشنهاد بدی. بعد از تایید ادمین وارد بازی میشه.", "Editable /help text with placeholders"),
             "max_level": ("100", "Maximum level"),
             "xp_level_curve_factor": ("112", "Quadratic XP curve factor; cumulative XP for level L is factor*(L-1)^2"),
             "start_photo_file_id": ("", "Optional photo file_id for /start"),
             "random_duel_cost": ("5", "Coins charged for random matchmaking entry"),
-            "friendly_duel_cost": ("20", "Coins charged from invite duel creator"),
+            "bot_duel_cost": ("3", "Coins charged for a duel against the bot opponent"),
             "matchmaking_timeout_seconds": ("120", "Random matchmaking timeout seconds"),
             "maintenance_mode": ("0", "1 disables bot for non-admin users"),
             "maintenance_text": ("بات موقتاً در حال تعمیر است. لطفاً بعداً دوباره تلاش کنید.", "Shown during maintenance"),
@@ -433,6 +462,7 @@ class Database:
         }
         for k, (v, d) in defaults.items():
             await self.execute_write("INSERT OR IGNORE INTO settings(key,value,description) VALUES(?,?,?)", (k, v, d))
+        await self.execute_write("DELETE FROM settings WHERE key='friendly_duel_cost'")
         old_help = await self.get_setting("help_text", "")
         if old_help.startswith("راهنما:\n⚔️ دوئل") or "Streak روزانه" in old_help:
             await self.set_setting("help_text", defaults["help_text"][0])
@@ -474,6 +504,114 @@ class Database:
                 "INSERT INTO shop_packages(title, coins, xp, price_label, package_type, price_amount) VALUES(?,?,?,?,?,?)",
                 [("بسته سکه شروع", 200, 0, "50,000 تومان", "coins", 50000), ("بسته XP", 0, 500, "70,000 تومان", "xp", 70000), ("بسته سکه حرفه‌ای", 800, 0, "180,000 تومان", "coins", 180000)],
             )
+        await self.seed_quest_templates()
+
+    async def seed_quest_templates(self) -> None:
+        templates = [
+            ("win_7_duels", "۷ دوئل رو ببر", "برنده بشو تا کوئست کامل بشه", "win_duels", 7, 40, 30),
+            ("start_10_duels", "۱۰ دوئل شروع کن", "فرقی نمی‌کنه ببری یا نه، فقط بازی کن", "start_duels", 10, 25, 15),
+            ("group_first_7", "۷ بار تو گروهی نفر اول شو", "توی بازی گروهی رتبه یک بیار", "group_first_place", 7, 50, 35),
+            ("correct_20", "۲۰ تا جواب درست بده", "توی هر بازی‌ای که هست حساب میشه", "correct_answers", 20, 20, 15),
+            ("play_5_group", "۵ بازی گروهی بازی کن", "کافیه شرکت کنی", "play_group_games", 5, 20, 10),
+        ]
+        for code, title, desc, goal_type, goal_count, coins, xp in templates:
+            await self.execute_write(
+                "INSERT OR IGNORE INTO quest_templates(code,title,description,goal_type,goal_count,reward_coins,reward_xp,is_active) VALUES(?,?,?,?,?,?,?,1)",
+                (code, title, desc, goal_type, goal_count, coins, xp),
+            )
+
+    async def get_today_quests(self, user_id: int, create_if_missing: bool = True) -> list[aiosqlite.Row]:
+        date_key = tehran_date_key()
+        rows = await self.fetchall(
+            """SELECT udq.*, qt.title, qt.description, qt.goal_type, qt.reward_coins, qt.reward_xp
+               FROM user_daily_quests udq JOIN quest_templates qt ON qt.id=udq.quest_template_id
+               WHERE udq.user_id=? AND udq.date=? ORDER BY udq.id""",
+            (user_id, date_key),
+        )
+        if rows or not create_if_missing:
+            return rows
+        templates = await self.fetchall("SELECT * FROM quest_templates WHERE is_active=1")
+        if not templates:
+            return []
+        picked = random.sample(templates, min(3, len(templates)))
+        for t in picked:
+            await self.execute_write(
+                "INSERT OR IGNORE INTO user_daily_quests(user_id,quest_template_id,date,progress,goal_count,completed,claimed,created_at) VALUES(?,?,?,0,?,0,0,?)",
+                (user_id, t["id"], date_key, t["goal_count"], now_iso()),
+            )
+        return await self.fetchall(
+            """SELECT udq.*, qt.title, qt.description, qt.goal_type, qt.reward_coins, qt.reward_xp
+               FROM user_daily_quests udq JOIN quest_templates qt ON qt.id=udq.quest_template_id
+               WHERE udq.user_id=? AND udq.date=? ORDER BY udq.id""",
+            (user_id, date_key),
+        )
+
+    async def bump_quest_progress(self, user_id: int, goal_type: str, amount: int = 1) -> list[aiosqlite.Row]:
+        """Advances progress on any of today's active quests matching goal_type. Returns quests that just completed."""
+        date_key = tehran_date_key()
+        rows = await self.fetchall(
+            """SELECT udq.* FROM user_daily_quests udq JOIN quest_templates qt ON qt.id=udq.quest_template_id
+               WHERE udq.user_id=? AND udq.date=? AND qt.goal_type=? AND udq.completed=0""",
+            (user_id, date_key, goal_type),
+        )
+        just_completed = []
+        for r in rows:
+            new_progress = min(int(r["progress"]) + amount, int(r["goal_count"]))
+            completed = 1 if new_progress >= int(r["goal_count"]) else 0
+            await self.execute_write("UPDATE user_daily_quests SET progress=?, completed=? WHERE id=?", (new_progress, completed, r["id"]))
+            if completed:
+                just_completed.append(r)
+        return just_completed
+
+    async def claim_quest_reward(self, user_id: int, quest_id: int) -> dict[str, Any] | None:
+        row = await self.fetchone(
+            """SELECT udq.*, qt.reward_coins, qt.reward_xp, qt.title
+               FROM user_daily_quests udq JOIN quest_templates qt ON qt.id=udq.quest_template_id
+               WHERE udq.id=? AND udq.user_id=?""",
+            (quest_id, user_id),
+        )
+        if not row or not row["completed"] or row["claimed"]:
+            return None
+        await self.execute_write("UPDATE user_daily_quests SET claimed=1 WHERE id=?", (quest_id,))
+        coins = int(row["reward_coins"])
+        xp = int(row["reward_xp"])
+        if coins:
+            await self.change_coins(user_id, coins, "quest_reward")
+        if xp:
+            await self.change_xp(user_id, xp, "quest_reward")
+        return {"coins": coins, "xp": xp, "title": row["title"]}
+
+    async def users_with_incomplete_quests_today(self) -> list[aiosqlite.Row]:
+        date_key = tehran_date_key()
+        return await self.fetchall(
+            """SELECT DISTINCT u.telegram_id, u.first_name, u.username
+               FROM user_daily_quests udq JOIN users u ON u.telegram_id=udq.user_id
+               WHERE udq.date=? AND udq.completed=0 AND u.is_blocked=0""",
+            (date_key,),
+        )
+
+    async def quest_summary_line(self, user_id: int) -> str | None:
+        quests = await self.get_today_quests(user_id, create_if_missing=False)
+        pending = [q for q in quests if not q["completed"]]
+        if not pending:
+            return None
+        q = min(pending, key=lambda r: int(r["goal_count"]) - int(r["progress"]))
+        remaining = int(q["goal_count"]) - int(q["progress"])
+        return f"«{q['title']}» — {remaining} تا مونده"
+
+    async def inactive_users_for_gift(self, days: int = 7) -> list[aiosqlite.Row]:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        return await self.fetchall(
+            """SELECT telegram_id, first_name, username FROM users
+               WHERE is_blocked=0
+               AND (last_duel_at IS NULL OR last_duel_at < ?)
+               AND created_at < ?
+               AND (last_inactive_gift_at IS NULL OR last_inactive_gift_at < ?)""",
+            (cutoff, cutoff, cutoff),
+        )
+
+    async def mark_inactive_gift_sent(self, user_id: int) -> None:
+        await self.execute_write("UPDATE users SET last_inactive_gift_at=? WHERE telegram_id=?", (now_iso(), user_id))
 
     async def seed_fixed_leagues(self) -> None:
         defaults = []
@@ -533,7 +671,7 @@ class Database:
     async def render_help_text(self) -> str:
         text = await self.get_setting("help_text", "")
         keys = [
-            "random_duel_cost", "friendly_duel_cost", "initial_signup_coins",
+            "random_duel_cost", "bot_duel_cost", "initial_signup_coins",
             "streak_day_1_coins", "streak_day_7_coins", "streak_day_7_xp",
             "referral_referrer_coins", "referral_referrer_xp",
             "referral_referred_coins", "referral_referred_xp",
@@ -753,6 +891,13 @@ class Database:
         cur = await self.execute_write("INSERT INTO duels(player1_id,status,invite_token,created_at) VALUES(?,?,?,?)", (player_id, "invite_waiting", token, now_iso()))
         return int(cur.lastrowid)
 
+    async def create_bot_duel(self, player_id: int, bot_opponent_id: int, bot_level: int) -> int:
+        cur = await self.execute_write(
+            "INSERT INTO duels(player1_id,player2_id,status,opponent_type,bot_level,created_at) VALUES(?,?,?,?,?,?)",
+            (player_id, bot_opponent_id, "genre_selection", "bot", bot_level, now_iso()),
+        )
+        return int(cur.lastrowid)
+
     async def get_duel(self, duel_id: int) -> aiosqlite.Row | None:
         return await self.fetchone("SELECT * FROM duels WHERE id=?", (duel_id,))
 
@@ -777,19 +922,19 @@ class Database:
     async def cancel_active_duels_with_refund(self) -> list[dict[str, Any]]:
         rows = await self.fetchall("SELECT * FROM duels WHERE status IN ('waiting','invite_waiting','genre_selection','playing')")
         random_cost = await self.get_int('random_duel_cost', 5)
-        friendly_cost = await self.get_int('friendly_duel_cost', 20)
+        bot_cost = await self.get_int('bot_duel_cost', 3)
         results: list[dict[str, Any]] = []
         for d in rows:
             refunds: dict[int, int] = {}
             if d['status'] == 'waiting':
                 refunds[d['player1_id']] = random_cost
-            elif d['status'] == 'invite_waiting':
-                refunds[d['player1_id']] = friendly_cost
             elif d['invite_token']:
-                refunds[d['player1_id']] = friendly_cost
+                pass  # rematch duels: no entry fee was charged, nothing to refund
+            elif d['opponent_type'] == 'bot':
+                refunds[d['player1_id']] = bot_cost
             else:
                 refunds[d['player1_id']] = random_cost
-                if d['player2_id']:
+                if d['player2_id'] and d['player2_id'] != self.BOT_OPPONENT_ID:
                     refunds[d['player2_id']] = random_cost
             await self.execute_write("UPDATE duels SET status='cancelled', finished_at=? WHERE id=?", (now_iso(), d['id']))
             for uid, amount in refunds.items():
@@ -866,6 +1011,12 @@ class Database:
         qs = selected
         await self.executemany_write("INSERT OR IGNORE INTO duel_questions(duel_id,question_id,seq) VALUES(?,?,?)", [(duel_id, q["id"], i) for i, q in enumerate(qs)])
         await self.execute_write("UPDATE duels SET status='playing', started_at=?, common_genres=? WHERE id=?", (now_iso(), "|".join(unique_genres), duel_id))
+        if qs:
+            duel = await self.get_duel(duel_id)
+            if duel:
+                for uid in [duel["player1_id"], duel["player2_id"]]:
+                    if uid and uid != self.BOT_OPPONENT_ID:
+                        await self.bump_quest_progress(uid, "start_duels", 1)
         return qs
 
     async def duel_question_by_seq(self, duel_id: int, seq: int) -> aiosqlite.Row | None:
@@ -883,7 +1034,10 @@ class Database:
                 "INSERT INTO duel_answers(duel_id,question_id,user_id,selected_option,is_correct,response_ms,answered_at,answer_score,attempt) VALUES(?,?,?,?,?,?,?,?,?)",
                 (duel_id, qid, user_id, selected, is_correct, response_ms, now_iso(), score, attempt),
             )
-            await self.execute_write("UPDATE users SET correct_answers=correct_answers+?, total_answers=total_answers+? WHERE telegram_id=?", (is_correct, 1 if selected else 0, user_id))
+            if user_id != self.BOT_OPPONENT_ID:
+                await self.execute_write("UPDATE users SET correct_answers=correct_answers+?, total_answers=total_answers+? WHERE telegram_id=?", (is_correct, 1 if selected else 0, user_id))
+                if is_correct:
+                    await self.bump_quest_progress(user_id, "correct_answers", 1)
             return True
         except Exception:
             logger.exception("Could not record answer duel=%s q=%s user=%s", duel_id, qid, user_id)
@@ -925,6 +1079,8 @@ class Database:
             "max": max_uses,
         }
 
+    BOT_OPPONENT_ID = -1001  # keep in sync with handlers/duel.py
+
     async def finish_duel(self, duel_id: int) -> dict[str, Any]:
         duel = await self.get_duel(duel_id)
         if not duel:
@@ -955,6 +1111,8 @@ class Database:
         draw_coin_reward = await self.get_int("duel_draw_coin_reward", 5)
         reward_details: dict[int, dict[str, int]] = {p1: {"answer_coins": 0, "win_coins": 0, "draw_coins": 0, "answer_xp": 0, "win_xp": 0}, p2: {"answer_coins": 0, "win_coins": 0, "draw_coins": 0, "answer_xp": 0, "win_xp": 0}}
         for uid, st in stats.items():
+            if uid == self.BOT_OPPONENT_ID:
+                continue
             if st["score"]:
                 answer_coins = int(st["score"] * coin_per) if is_random_duel else 0
                 answer_xp = int(st["score"] * xp_per)
@@ -975,6 +1133,7 @@ class Database:
                 if league:
                     await self.change_cups(uid, int(league["win_cups"]), "duel_win", duel_id, league["id"])
                 await self.execute_write("UPDATE users SET wins=wins+1, last_duel_at=? WHERE telegram_id=?", (now_iso(), uid))
+                await self.bump_quest_progress(uid, "win_duels", 1)
             elif winner is None:
                 if draw_coin_reward:
                     await self.change_coins(uid, draw_coin_reward, "duel_draw_reward", duel_id)
@@ -986,6 +1145,8 @@ class Database:
                 await self.execute_write("UPDATE users SET losses=losses+1, last_duel_at=? WHERE telegram_id=?", (now_iso(), uid))
         transitions: dict[int, dict[str, Any]] = {}
         for uid in [p1, p2]:
+            if uid == self.BOT_OPPONENT_ID:
+                continue
             await self.sync_user_title(uid)
             u = await self.get_user(uid)
             lg = await self.get_user_league(int(u["cups"] if u else 0))
@@ -1011,6 +1172,8 @@ class Database:
                                       FROM duel_answers a JOIN questions q ON q.id=a.question_id
                                       WHERE a.duel_id=? GROUP BY a.user_id, q.genre""", (duel_id,))
         for r in rows:
+            if r['user_id'] == self.BOT_OPPONENT_ID:
+                continue
             await self.execute_write("""INSERT INTO user_genre_stats(user_id,genre,correct,total,last_updated)
                                       VALUES(?,?,?,?,?)
                                       ON CONFLICT(user_id,genre) DO UPDATE SET
@@ -1362,8 +1525,8 @@ class Database:
             'daily_aid','referral','referral_new_user','group_duel_correct','group_duel_win'
         )
         burned_reasons = (
-            'random_duel_entry','friendly_duel_create','powerup_remove2','powerup_second',
-            'inactive_forfeit_penalty','powerup_5050','powerup_hint'
+            'random_duel_entry', 'bot_duel_entry', 'powerup_remove2', 'powerup_second',
+            'inactive_forfeit_penalty', 'powerup_5050', 'powerup_hint'
         )
         gen_ph = ','.join('?' for _ in generated_reasons)
         burn_ph = ','.join('?' for _ in burned_reasons)

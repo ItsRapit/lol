@@ -11,6 +11,7 @@ from app.db import Database
 from app.logging_config import setup_logging
 from app.handlers import common, duel, shop, questions, admin, group_quiz
 from app.middlewares import ActiveDuelMenuGuardMiddleware
+from app.scheduler import setup_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -70,9 +71,11 @@ async def main() -> None:
     ])
 
     logger.info("Bot started as @%s", bot_username)
+    scheduler = setup_scheduler(bot, db)
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
+        scheduler.shutdown(wait=False)
         await db.close()
         await bot.session.close()
 

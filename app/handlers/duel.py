@@ -62,8 +62,8 @@ async def duel_entry(message: Message, db: Database) -> None:
         await message.answer("حساب شما مسدود است.")
         return
     random_cost = await db.get_int('random_duel_cost', 5)
-    friendly_cost = await db.get_int('friendly_duel_cost', 20)
-    await message.answer("⚔️ دوئل\nیکی را انتخاب کن:", reply_markup=duel_menu(random_cost, friendly_cost))
+    bot_cost = await db.get_int('bot_duel_cost', 3)
+    await message.answer("⚔️ دوئل\nیکی را انتخاب کن:", reply_markup=duel_menu(random_cost, bot_cost))
 
 
 @router.callback_query(F.data == "duel:random")
@@ -138,62 +138,72 @@ async def cancel_random_queue(call: CallbackQuery, db: Database) -> None:
         await call.answer("خطا", show_alert=True)
 
 
-@router.callback_query(F.data == "duel:invite")
-async def invite_duel(call: CallbackQuery, db: Database, bot_username: str) -> None:
+BOT_OPPONENT_ID = -1001  # synthetic telegram_id reserved for the bot opponent "user" row
+BOT_OPPONENT_NAME = "🤖 ربات"
+BOT_LEVEL_ACCURACY = {1: 0.30, 2: 0.45, 3: 0.60, 4: 0.75, 5: 0.90}
+
+
+async def ensure_bot_opponent_row(db: Database) -> None:
+    existing = await db.get_user(BOT_OPPONENT_ID)
+    if not existing:
+        await db.upsert_user(BOT_OPPONENT_ID, "quizbot", BOT_OPPONENT_NAME)
+
+
+@router.callback_query(F.data == "duel:bot")
+async def bot_duel(call: CallbackQuery, db: Database, bot: Bot) -> None:
     try:
         active = await db.active_duel_for_user(call.from_user.id)
         if active:
             await call.answer("شما یک دوئل فعال دارید.", show_alert=True)
             return
-        cost = await db.get_int('friendly_duel_cost', 20)
+        cost = await db.get_int('bot_duel_cost', 3)
         user = await db.get_user(call.from_user.id)
         if not user or user['coins'] < cost:
-            await call.answer(f"برای ساخت دوئل دوستانه به {cost} سکه نیاز داری.", show_alert=True)
+            await call.answer(f"برای دوئل با ربات به {cost} سکه نیاز داری.", show_alert=True)
             return
-        await db.change_coins(call.from_user.id, -cost, 'friendly_duel_create')
-        token = invite_token()
-        await db.create_invite_duel(call.from_user.id, token)
-        link = f"https://t.me/{bot_username}?start=invite_{token}"
-        await call.message.answer(f"{cost} سکه از سازنده کسر شد. این لینک را برای دوستت بفرست:\n{link}")
+        await ensure_bot_opponent_row(db)
+        await db.change_coins(call.from_user.id, -cost, 'bot_duel_entry')
+        level = random.randint(1, 5)
+        duel_id = await db.create_bot_duel(call.from_user.id, BOT_OPPONENT_ID, level)
+        await call.message.answer(f"حریف پیدا شد: {BOT_OPPONENT_NAME}\nانتخاب ژانر شروع شد.")
+        await offer_genres(duel_id, db, bot)
         await call.answer()
     except Exception:
-        logger.exception("Invite duel failed")
+        logger.exception("Bot duel failed")
         await call.answer("خطا", show_alert=True)
 
 
-async def join_invite_from_start(message: Message, db: Database, token: str) -> None:
-    duel = await db.get_invite_duel(token)
-    if not duel:
-        await message.answer("این دعوت‌نامه معتبر نیست یا قبلاً استفاده شده است.")
+def duel_entry_cost_key(duel) -> str:
+    """Setting key for the coin cost that was paid to enter this duel type."""
+    return 'bot_duel_cost' if duel['opponent_type'] == 'bot' else 'random_duel_cost'
+
+
+def is_real_user(uid: int | None) -> bool:
+    return bool(uid) and uid != BOT_OPPONENT_ID
+
+
+async def safe_send(bot: Bot, uid: int | None, *args, **kwargs) -> None:
+    if not is_real_user(uid):
         return
-    if duel['player1_id'] == message.from_user.id:
-        await message.answer("نمی‌توانی با خودت دوئل کنی.")
-        return
-    await db.join_duel(duel['id'], message.from_user.id)
-    await message.answer("وارد دوئل دعوتی شدی. انتخاب ژانر شروع شد.")
-    from aiogram import Bot as BotType
-    bot: BotType = message.bot
-    await bot.send_message(duel['player1_id'], "دوستت وارد دوئل شد. انتخاب ژانر شروع شد.")
-    await offer_genres(duel['id'], db, bot)
+    await bot.send_message(uid, *args, **kwargs)
 
 
 async def offer_genres(duel_id: int, db: Database, bot: Bot) -> None:
     duel = await db.get_duel(duel_id)
     if not duel or not duel['player2_id']:
         return
+    is_bot_duel = duel['opponent_type'] == 'bot'
     all_genres = await db.available_genres()
     already = set(g for g in (duel['offered_genres'] or '').split('|') if g)
     candidates = [g for g in all_genres if g not in already]
     offer_n = await db.get_int('genres_to_offer', 4)
     choose_n = await db.get_int('genres_to_choose', 2)
     if len(candidates) < offer_n:
+        cost = await db.get_int(duel_entry_cost_key(duel), 5)
         await bot.send_message(duel['player1_id'], "ژانر/سوال فعال کافی برای شروع دوئل وجود ندارد؛ هزینه پرداخت‌شده برگردانده شد.")
-        await bot.send_message(duel['player2_id'], "ژانر/سوال فعال کافی برای شروع دوئل وجود ندارد؛ هزینه پرداخت‌شده برگردانده شد.")
-        if duel['invite_token']:
-            await db.change_coins(duel['player1_id'], await db.get_int('friendly_duel_cost', 20), 'duel_cancel_refund', duel_id)
-        else:
-            cost = await db.get_int('random_duel_cost', 5)
-            await db.change_coins(duel['player1_id'], cost, 'duel_cancel_refund', duel_id)
+        await db.change_coins(duel['player1_id'], cost, 'duel_cancel_refund', duel_id)
+        if not is_bot_duel:
+            await bot.send_message(duel['player2_id'], "ژانر/سوال فعال کافی برای شروع دوئل وجود ندارد؛ هزینه پرداخت‌شده برگردانده شد.")
             await db.change_coins(duel['player2_id'], cost, 'duel_cancel_refund', duel_id)
         await db.execute_write("UPDATE duels SET status='cancelled' WHERE id=?", (duel_id,))
         return
@@ -214,7 +224,13 @@ async def offer_genres(duel_id: int, db: Database, bot: Bot) -> None:
     }
     await db.set_offered_genres(duel_id, list(dict.fromkeys(offers[duel['player1_id']] + offers[duel['player2_id']])))
     timeout_seconds = await db.get_int('genre_selection_timeout_seconds', 60)
+    if is_bot_duel:
+        # Bot instantly "picks" random genres from its offer, no waiting.
+        bot_pick = random.sample(offer2, min(choose_n, len(offer2)))
+        await db.save_genre_choices(duel_id, duel['player2_id'], bot_pick)
     for uid in [duel['player1_id'], duel['player2_id']]:
+        if is_bot_duel and uid == duel['player2_id']:
+            continue
         user_genre_temp[(duel_id, uid)] = set()
         user_offer_temp[(duel_id, uid)] = offers[uid]
         await bot.send_message(uid, f"از ژانرهای زیر دقیقاً {choose_n} مورد را انتخاب کن:", reply_markup=genres_keyboard(duel_id, offers[uid], set(), choose_n))
@@ -235,21 +251,13 @@ async def genre_selection_timeout(duel_id: int, user_id: int, seconds: int, db: 
             return
         other_id = duel['player2_id'] if user_id == duel['player1_id'] else duel['player1_id']
         await db.execute_write("UPDATE duels SET status='cancelled', finished_at=? WHERE id=?", (now_iso(), duel_id))
-        if duel['invite_token']:
-            # Creator already paid. If invitee times out, creator is refunded; if creator times out, no refund.
-            if user_id != duel['player1_id']:
-                await db.change_coins(duel['player1_id'], await db.get_int('friendly_duel_cost', 20), 'genre_timeout_other_refund', duel_id)
-        else:
-            cost = await db.get_int('random_duel_cost', 5)
-            if other_id:
-                await db.change_coins(other_id, cost, 'genre_timeout_other_refund', duel_id)
-        for uid in [duel['player1_id'], duel['player2_id']]:
-            if not uid:
-                continue
-            if uid == user_id:
-                await bot.send_message(uid, "⏱ زمان انتخاب ژانر تمام شد؛ چون انتخاب نکردی دوئل بسته شد و هزینه ورودت برنگشت.", reply_markup=main_menu(await db.is_admin(uid)))
-            else:
-                await bot.send_message(uid, "⏱ حریف ژانر را انتخاب نکرد؛ دوئل بسته شد و هزینه ورودت برگشت.", reply_markup=main_menu(await db.is_admin(uid)))
+        cost = await db.get_int(duel_entry_cost_key(duel), 5)
+        is_bot_duel = duel['opponent_type'] == 'bot'
+        if not is_bot_duel and other_id:
+            await db.change_coins(other_id, cost, 'genre_timeout_other_refund', duel_id)
+        await bot.send_message(user_id, "⏱ زمان انتخاب ژانر تمام شد؛ چون انتخاب نکردی دوئل بسته شد و هزینه ورودت برنگشت.", reply_markup=main_menu(await db.is_admin(user_id)))
+        if not is_bot_duel and other_id:
+            await bot.send_message(other_id, "⏱ حریف ژانر را انتخاب نکرد؛ دوئل بسته شد و هزینه ورودت برگشت.", reply_markup=main_menu(await db.is_admin(other_id)))
         for key, task in list(genre_timeout_tasks.items()):
             if key[0] == duel_id and not task.done():
                 task.cancel()
@@ -307,6 +315,7 @@ async def genre_done(call: CallbackQuery, db: Database, bot: Bot) -> None:
         duel = await db.get_duel(duel_id)
         choices = await db.duel_choices(duel_id)
         if duel and duel['player1_id'] in choices and duel['player2_id'] in choices:
+            is_bot_duel = duel['opponent_type'] == 'bot'
             for key, task in list(genre_timeout_tasks.items()):
                 if key[0] == duel_id:
                     if not task.done():
@@ -316,18 +325,17 @@ async def genre_done(call: CallbackQuery, db: Database, bot: Bot) -> None:
             count = await db.get_int('duel_question_count', 7)
             qs = await db.start_duel_questions(duel_id, selected_genres, count)
             if not qs:
+                cost = await db.get_int(duel_entry_cost_key(duel), 5)
                 await bot.send_message(duel['player1_id'], "در ژانرهای انتخاب‌شده سوال فعالی پیدا نشد؛ هزینه پرداخت‌شده برگردانده شد.")
-                await bot.send_message(duel['player2_id'], "در ژانرهای انتخاب‌شده سوال فعالی پیدا نشد؛ هزینه پرداخت‌شده برگردانده شد.")
-                if duel['invite_token']:
-                    await db.change_coins(duel['player1_id'], await db.get_int('friendly_duel_cost', 20), 'duel_cancel_refund', duel_id)
-                else:
-                    cost = await db.get_int('random_duel_cost', 5)
-                    await db.change_coins(duel['player1_id'], cost, 'duel_cancel_refund', duel_id)
+                await db.change_coins(duel['player1_id'], cost, 'duel_cancel_refund', duel_id)
+                if not is_bot_duel:
+                    await bot.send_message(duel['player2_id'], "در ژانرهای انتخاب‌شده سوال فعالی پیدا نشد؛ هزینه پرداخت‌شده برگردانده شد.")
                     await db.change_coins(duel['player2_id'], cost, 'duel_cancel_refund', duel_id)
                 await db.execute_write("UPDATE duels SET status='cancelled' WHERE id=?", (duel_id,))
             else:
                 await bot.send_message(duel['player1_id'], f"دوئل شروع شد! ژانرهای بازی: {', '.join(selected_genres)}")
-                await bot.send_message(duel['player2_id'], f"دوئل شروع شد! ژانرهای بازی: {', '.join(selected_genres)}")
+                if not is_bot_duel:
+                    await bot.send_message(duel['player2_id'], f"دوئل شروع شد! ژانرهای بازی: {', '.join(selected_genres)}")
                 await send_current_question(duel_id, db, bot)
         await call.answer()
     except Exception:
@@ -351,9 +359,11 @@ async def send_current_question(duel_id: int, db: Database, bot: Bot) -> None:
         p1 = await db.get_user(duel['player1_id'])
         p2 = await db.get_user(duel['player2_id'])
         p1_name = (p1['first_name'] or p1['username'] or str(duel['player1_id'])) if p1 else str(duel['player1_id'])
-        p2_name = (p2['first_name'] or p2['username'] or str(duel['player2_id'])) if p2 else str(duel['player2_id'])
+        p2_name = BOT_OPPONENT_NAME if duel['opponent_type'] == 'bot' else ((p2['first_name'] or p2['username'] or str(duel['player2_id'])) if p2 else str(duel['player2_id']))
         text = f"⚔️ {p1_name} vs {p2_name}\n\nسوال {seq + 1}\nID: <code>{q['id']}</code>\n\n{q['text']}"
         for uid in [duel['player1_id'], duel['player2_id']]:
+            if not is_real_user(uid):
+                continue
             costs = await db.powerup_costs_for_user(duel_id, uid)
             markup = question_keyboard(duel_id, q['id'], options_from_question(q), cost_remove2=costs['remove2'], cost_auto=costs['auto'])
             old_message_id = duel_main_message_ids.get((duel_id, uid))
@@ -370,6 +380,34 @@ async def send_current_question(duel_id: int, db: Database, bot: Bot) -> None:
         if rt.timeout_task and not rt.timeout_task.done():
             rt.timeout_task.cancel()
         rt.timeout_task = asyncio.create_task(timeout_question(duel_id, q['id'], timer, db, bot))
+        if duel['opponent_type'] == 'bot':
+            asyncio.create_task(bot_answer_question(duel_id, q['id'], int(duel['bot_level'] or 3), timer, db))
+
+
+async def bot_answer_question(duel_id: int, qid: int, level: int, timer_seconds: int, db: Database) -> None:
+    """Simulates the bot opponent answering after a random human-like delay."""
+    try:
+        delay = min(random.uniform(2.0, 12.0), max(1.0, timer_seconds - 1.0))
+        await asyncio.sleep(delay)
+        duel = await db.get_duel(duel_id)
+        q = await db.fetchone("SELECT * FROM questions WHERE id=?", (qid,))
+        if not duel or not q or duel['status'] != 'playing':
+            return
+        if await db.has_answered(duel_id, qid, BOT_OPPONENT_ID):
+            return
+        accuracy = BOT_LEVEL_ACCURACY.get(level, 0.5)
+        correct_option = int(q['correct_option'])
+        if random.random() < accuracy:
+            selected = correct_option
+        else:
+            wrong_options = [i for i in range(1, 5) if i != correct_option]
+            selected = random.choice(wrong_options)
+        response_ms = int(delay * 1000)
+        await db.record_answer(duel_id, qid, BOT_OPPONENT_ID, selected, correct_option, response_ms)
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        logger.exception("Bot answer simulation failed")
 
 
 async def forfeit_inactive_duel(duel_id: int, inactive_users: list[int], db: Database, bot: Bot) -> None:
@@ -384,13 +422,14 @@ async def forfeit_inactive_duel(duel_id: int, inactive_users: list[int], db: Dat
         winner = active[0] if len(active) == 1 else None
         await db.execute_write("UPDATE duels SET status='cancelled', finished_at=?, winner_id=? WHERE id=?", (now_iso(), winner, duel_id))
         for uid in inactive:
-            await db.change_coins(uid, -penalty, 'inactive_forfeit_penalty', duel_id)
-        if winner:
+            if is_real_user(uid):
+                await db.change_coins(uid, -penalty, 'inactive_forfeit_penalty', duel_id)
+        if winner and is_real_user(winner):
             await db.change_coins(winner, penalty, 'inactive_forfeit_reward', duel_id)
         for uid in inactive:
-            await bot.send_message(uid, f"⚠️ به دلیل پاسخ ندادن به 3 سوال پشت‌سرهم، دوئل بسته شد و {penalty} سکه جریمه شدی.", reply_markup=main_menu(await db.is_admin(uid)))
+            await safe_send(bot, uid, f"⚠️ به دلیل پاسخ ندادن به 3 سوال پشت‌سرهم، دوئل بسته شد و {penalty} سکه جریمه شدی.", reply_markup=main_menu(await db.is_admin(uid)))
         for uid in active:
-            await bot.send_message(uid, f"✅ حریف 3 سوال پشت‌سرهم جواب نداد؛ دوئل بسته شد و {penalty} سکه جریمه حریف به حسابت اضافه شد.", reply_markup=main_menu(await db.is_admin(uid)))
+            await safe_send(bot, uid, f"✅ حریف 3 سوال پشت‌سرهم جواب نداد؛ دوئل بسته شد و {penalty} سکه جریمه حریف به حسابت اضافه شد.", reply_markup=main_menu(await db.is_admin(uid)))
         channel = await db.get_setting('reports_channel_id', '')
         if channel:
             try:
@@ -425,6 +464,8 @@ async def edit_duel_question_results(duel_id: int, qid: int, db: Database, bot: 
         correct_text = opts[int(q['correct_option']) - 1]
         seq = int(duel['current_index']) + 1
         for uid in [duel['player1_id'], duel['player2_id']]:
+            if not is_real_user(uid):
+                continue
             ans = await db.fetchone("SELECT selected_option,is_correct FROM duel_answers WHERE duel_id=? AND question_id=? AND user_id=?", (duel_id, qid, uid))
             if ans and ans['selected_option']:
                 selected_text = opts[int(ans['selected_option']) - 1]
@@ -545,6 +586,8 @@ async def finish_and_notify(duel_id: int, db: Database, bot: Bot) -> None:
     stats = result['stats']
     winner = result['winner']
     for uid in [duel['player1_id'], duel['player2_id']]:
+        if not is_real_user(uid):
+            continue
         if winner is None:
             line = "🤝 نتیجه: مساوی"
         elif winner == uid:
@@ -571,15 +614,19 @@ async def finish_and_notify(duel_id: int, db: Database, bot: Bot) -> None:
             f"🎯 دقت: {summary['accuracy']}%\n\n"
             f"📌 سوالاتی که غلط زدی:\n{wrong_lines}"
         )
+        is_bot_opponent = duel['opponent_type'] == 'bot'
+        markup = duel_finished_keyboard(duel_id, opponent_id, is_bot_opponent)
         old_message_id = duel_main_message_ids.get((duel_id, uid))
         if old_message_id:
             try:
-                await bot.edit_message_text(final_text, chat_id=uid, message_id=old_message_id, reply_markup=duel_finished_keyboard(duel_id, opponent_id))
+                await bot.edit_message_text(final_text, chat_id=uid, message_id=old_message_id, reply_markup=markup)
             except Exception:
-                await bot.send_message(uid, final_text, reply_markup=duel_finished_keyboard(duel_id, opponent_id))
+                await bot.send_message(uid, final_text, reply_markup=markup)
         else:
-            await bot.send_message(uid, final_text, reply_markup=duel_finished_keyboard(duel_id, opponent_id))
+            await bot.send_message(uid, final_text, reply_markup=markup)
     for uid in [duel['player1_id'], duel['player2_id']]:
+        if not is_real_user(uid):
+            continue
         await send_duel_transition_notifications(bot, db, uid, result.get('transitions', {}).get(uid, {}))
         reward = await db.claim_streak_reward(uid)
         await send_streak_notification(bot, uid, reward)

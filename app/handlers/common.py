@@ -4,7 +4,7 @@ from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from app.db import Database
-from app.keyboards import main_menu, leaderboard_basis_keyboard, leaderboard_period_keyboard, CANCEL_TEXT, back_home_keyboard
+from app.keyboards import main_menu, leaderboard_basis_keyboard, leaderboard_period_keyboard, CANCEL_TEXT, back_home_keyboard, quests_keyboard
 from app.utils import ensure_user, xp_progress_text, rtl_line, to_english_digits, league_with_emoji, rank_with_emoji
 from app.notifications import send_streak_notification
 from app.time_utils import jalali_date, jalali_datetime
@@ -55,13 +55,7 @@ async def start(message: Message, db: Database, state: FSMContext, bot: Bot, com
             if signup_gift > 0:
                 await db.change_coins(message.from_user.id, signup_gift, "initial_signup")
         streak_reward = await db.claim_streak_reward(message.from_user.id)
-        if payload and payload.startswith('invite_'):
-            if was_new and signup_gift > 0:
-                await message.answer(f"🎁 {signup_gift}تا سکه برای شروع در اختیار شما قرار گرفت.")
-            await send_streak_notification(bot, message.from_user.id, streak_reward)
-            from app.handlers.duel import join_invite_from_start
-            await join_invite_from_start(message, db, payload.removeprefix('invite_'))
-            return
+        await db.get_today_quests(message.from_user.id)
         welcome = await db.get_setting("welcome_text", "سلام! به ربات کوییز دوئلی خوش آمدی. از منوی پایین انتخاب کن:")
         if was_new and signup_gift > 0:
             welcome += f"\n\n🎁 {signup_gift}تا سکه برای شروع در اختیار شما قرار گرفت."
@@ -212,9 +206,55 @@ async def referral(message: Message, db: Database, bot_username: str) -> None:
         )
 
 
-@router.message(F.text == "🏰 کلن (به‌زودی)")
-async def clan_placeholder(message: Message, db: Database) -> None:
-    await message.answer("🏰 قابلیت کلن به‌زودی اضافه می‌شود.")
+@router.message(F.text == "🎯 کوئست روزانه")
+async def daily_quests(message: Message, db: Database) -> None:
+    u = await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    if u['is_blocked']:
+        await message.answer("حساب شما مسدود است.")
+        return
+    quests = await db.get_today_quests(message.from_user.id)
+    if not quests:
+        await message.answer("امروز کوئستی برات نداریم، بعداً یه سر بزن.")
+        return
+    lines = ["🎯 کوئست‌های امروزت:\n"]
+    for q in quests:
+        progress = min(int(q['progress']), int(q['goal_count']))
+        goal = int(q['goal_count'])
+        if q['claimed']:
+            status = "✅ گرفتی"
+        elif q['completed']:
+            status = "🎁 آماده‌ی دریافت"
+        else:
+            status = f"{progress}/{goal}"
+        lines.append(f"• {q['title']} — {status}\n  {q['description']}\n  جایزه: {q['reward_coins']} سکه + {q['reward_xp']} XP")
+    await message.answer("\n\n".join(lines), reply_markup=quests_keyboard(quests))
+
+
+@router.callback_query(F.data.startswith("quest_claim:"))
+async def quest_claim(call: CallbackQuery, db: Database) -> None:
+    try:
+        quest_id = int(call.data.split(":", 1)[1])
+        result = await db.claim_quest_reward(call.from_user.id, quest_id)
+        if not result:
+            await call.answer("این کوئست قبلاً گرفته شده یا هنوز کامل نشده.", show_alert=True)
+            return
+        await call.answer(f"گرفتی! +{result['coins']} سکه, +{result['xp']} XP", show_alert=True)
+        quests = await db.get_today_quests(call.from_user.id)
+        lines = ["🎯 کوئست‌های امروزت:\n"]
+        for q in quests:
+            progress = min(int(q['progress']), int(q['goal_count']))
+            goal = int(q['goal_count'])
+            if q['claimed']:
+                status = "✅ گرفتی"
+            elif q['completed']:
+                status = "🎁 آماده‌ی دریافت"
+            else:
+                status = f"{progress}/{goal}"
+            lines.append(f"• {q['title']} — {status}\n  {q['description']}\n  جایزه: {q['reward_coins']} سکه + {q['reward_xp']} XP")
+        await call.message.edit_text("\n\n".join(lines), reply_markup=quests_keyboard(quests))
+    except Exception:
+        logger.exception("Quest claim failed")
+        await call.answer("خطا", show_alert=True)
 
 
 @router.callback_query(F.data == "check_force_join")

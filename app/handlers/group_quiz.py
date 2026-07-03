@@ -871,6 +871,9 @@ async def finish_group_game(bot: Bot, db: Database, game: GroupGame) -> None:
             mention = f"@{game.lobby.usernames.get(uid)}" if game.lobby.usernames.get(uid) else trim_name(name)
             levelups.append((uid, mention, old_level, new_level, title_text))
         lines.append(f"{pos}. {trim_name(name)} — {score}/{len(game.questions)} ✅ (+{xp} XP)")
+        await db.bump_quest_progress(uid, "play_group_games", 1)
+        if pos == 1 and score > 0:
+            await db.bump_quest_progress(uid, "group_first_place", 1)
     text = "🏆 نتیجه‌ی بازی\n━━━━━━━━━━━━━━\n" + "\n".join(lines) + "\n━━━━━━━━━━━━━━\n\nبرای گزارش مشکل، دکمه گزارش را بزن."
     completed_group_games[game.lobby.lobby_id] = game
     await edit_lobby(bot, game.lobby, text, group_finished_keyboard(game.lobby.lobby_id, "gqreport"))
