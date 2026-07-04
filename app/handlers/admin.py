@@ -13,7 +13,7 @@ from app.keyboards import (
     admin_leagues_keyboard, admin_league_edit_keyboard, admin_discounts_keyboard,
     discount_kind_keyboard, question_manage_keyboard, question_genres_keyboard, pending_questions_keyboard,
     invalid_questions_confirm_keyboard, review_question_keyboard, question_admin_actions_keyboard, question_search_results_keyboard, genre_edit_keyboard,
-    titles_menu_keyboard, animation_preview_keyboard, admin_submenu_keyboard,
+    titles_menu_keyboard, animation_preview_keyboard, admin_submenu_keyboard, broadcast_confirm_keyboard,
 )
 from app.states import AdminFlow, BulkQuestionImport, ShopPackageFlow, LeagueFlow, DiscountFlow, QuestionCleanupFlow, QuestionEditFlow, TitleFlow
 from app.bulk_questions import parse_bulk_questions, format_bulk_report, bulk_help_text, extract_json_text, is_json_balanced, looks_like_json, looks_like_bulk_text
@@ -687,6 +687,9 @@ async def admin_callback(call: CallbackQuery, db: Database, state: FSMContext, b
         elif action == 'start_photo':
             await state.set_state(AdminFlow.waiting_start_photo)
             await call.message.answer("عکس جدید پیام /start را ارسال کنید. برای حذف عکس، متن /remove_photo را بفرستید.", reply_markup=cancel_keyboard())
+        elif action == 'broadcast':
+            await state.set_state(AdminFlow.waiting_broadcast)
+            await call.message.answer("متن پیام همگانی رو بفرست (متن، عکس یا هر چیزی که میخوای عیناً برای همه کاربرا فوروارد بشه)", reply_markup=cancel_keyboard())
         elif action == 'levels':
             rows = await db.level_config_rows()
             preview = "\n".join(f"{r['level_number']}. {(r['emoji'] or '')} {(r['name'] or 'لول ' + str(r['level_number']))} | XP: {r['xp_required']}" for r in rows[:30])
@@ -1210,6 +1213,67 @@ async def start_photo_save(message: Message, db: Database, state: FSMContext) ->
     except Exception:
         logger.exception("Start photo save failed")
         await message.answer("خطا در ذخیره عکس استارت.")
+
+
+@router.message(AdminFlow.waiting_broadcast)
+async def broadcast_preview(message: Message, db: Database, state: FSMContext) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        await state.update_data(broadcast_chat_id=message.chat.id, broadcast_message_id=message.message_id)
+        await state.set_state(AdminFlow.waiting_broadcast_confirm)
+        user_count = len(await db.all_user_ids())
+        await message.answer(
+            f"⬆️ پیش‌نمایش پیام همگانی\nبرای {user_count} کاربر عیناً همینی که بالاست فرستاده میشه\nمطمئنی؟",
+            reply_markup=broadcast_confirm_keyboard(),
+        )
+    except Exception:
+        logger.exception("Broadcast preview failed")
+        await message.answer("خطا در آماده‌سازی پیام همگانی.")
+
+
+@router.callback_query(F.data == "broadcast_cancel")
+async def broadcast_cancel(call: CallbackQuery, db: Database, state: FSMContext) -> None:
+    try:
+        if not await require_admin_call(call, db):
+            return
+        await state.clear()
+        await call.message.edit_text("📢 پیام همگانی لغو شد")
+        await call.answer()
+    except Exception:
+        logger.exception("Broadcast cancel failed")
+        await call.answer("خطا", show_alert=True)
+
+
+@router.callback_query(F.data == "broadcast_confirm")
+async def broadcast_confirm(call: CallbackQuery, db: Database, state: FSMContext, bot: Bot) -> None:
+    try:
+        if not await require_admin_call(call, db):
+            return
+        data = await state.get_data()
+        chat_id = data.get("broadcast_chat_id")
+        message_id = data.get("broadcast_message_id")
+        await state.clear()
+        if not chat_id or not message_id:
+            await call.answer("پیام همگانی پیدا نشد، دوباره امتحان کن", show_alert=True)
+            return
+        await call.message.edit_text("📢 در حال ارسال پیام همگانی...")
+        await call.answer()
+        user_ids = await db.all_user_ids()
+        sent = 0
+        failed = 0
+        for uid in user_ids:
+            try:
+                await bot.copy_message(chat_id=uid, from_chat_id=chat_id, message_id=message_id)
+                sent += 1
+            except Exception:
+                failed += 1
+            await asyncio.sleep(0.05)
+        await db.log_admin(call.from_user.id, "broadcast", f"sent={sent} failed={failed}")
+        await call.message.answer(f"✅ پیام همگانی ارسال شد\nموفق {sent} | ناموفق {failed}")
+    except Exception:
+        logger.exception("Broadcast send failed")
+        await call.answer("خطا در ارسال پیام همگانی", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("discount:"))

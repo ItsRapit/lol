@@ -852,14 +852,22 @@ async def opponent_profile_callback(call: CallbackQuery, db: Database) -> None:
         await call.message.answer("خطا در نمایش پروفایل حریف")
 
 
-async def rematch_timeout(requester_id: int, opponent_id: int, bot: Bot) -> None:
+async def rematch_timeout(requester_id: int, opponent_id: int, opponent_chat_id: int, opponent_message_id: int, bot: Bot) -> None:
     try:
         await asyncio.sleep(60)
         key = (requester_id, opponent_id)
         task = rematch_timeout_tasks.pop(key, None)
         if task:
-            await bot.send_message(requester_id, "⏱ درخواست بازی مجدد منقضی شد")
-            await bot.send_message(opponent_id, "⏱ زمان پاسخ به درخواست بازی مجدد تموم شد")
+            rematch_sent_pairs.discard(key)
+            try:
+                await bot.edit_message_text(
+                    "⏱ به دلیل عدم پاسخ درخواست بازی مجدد منقضی شد و رد شد",
+                    chat_id=opponent_chat_id,
+                    message_id=opponent_message_id,
+                )
+            except Exception:
+                logger.debug("Could not edit expired rematch message", exc_info=True)
+            await bot.send_message(requester_id, "😔 متاسفم، حریف درخواستت رو نادیده گرفت")
     except asyncio.CancelledError:
         return
     except Exception:
@@ -874,12 +882,16 @@ async def rematch_request_callback(call: CallbackQuery, db: Database, bot: Bot) 
         if key in rematch_sent_pairs:
             await call.answer("دیگه نمی‌تونی برای این حریف درخواست مجدد بفرستی", show_alert=True)
             return
+        active = await db.active_duel_for_user(call.from_user.id)
+        if active:
+            await call.answer("خودت الان وسط یه بازی دیگه‌ای", show_alert=True)
+            return
         rematch_sent_pairs.add(key)
-        await bot.send_message(opponent_id, "حریفت درخواست بازی مجدد فرستاده", reply_markup=rematch_keyboard(call.from_user.id))
+        sent = await bot.send_message(opponent_id, "حریفت درخواست بازی مجدد فرستاده", reply_markup=rematch_keyboard(call.from_user.id))
         old = rematch_timeout_tasks.pop(key, None)
         if old and not old.done():
             old.cancel()
-        rematch_timeout_tasks[key] = asyncio.create_task(rematch_timeout(call.from_user.id, opponent_id, bot))
+        rematch_timeout_tasks[key] = asyncio.create_task(rematch_timeout(call.from_user.id, opponent_id, sent.chat.id, sent.message_id, bot))
         await call.answer("درخواست ارسال شد", show_alert=False)
     except Exception:
         logger.exception("Rematch request failed")
@@ -888,14 +900,17 @@ async def rematch_request_callback(call: CallbackQuery, db: Database, bot: Bot) 
 
 @router.callback_query(F.data.startswith("rematch_decline:"))
 async def rematch_decline_callback(call: CallbackQuery, bot: Bot) -> None:
-    await call.answer("رد شد", show_alert=False)
     try:
         requester_id = int(call.data.split(":")[1])
-        for key, task in list(rematch_timeout_tasks.items()):
-            if key[0] == requester_id and key[1] == call.from_user.id:
-                rematch_timeout_tasks.pop(key, None)
-                if not task.done():
-                    task.cancel()
+        key = (requester_id, call.from_user.id)
+        task = rematch_timeout_tasks.pop(key, None)
+        rematch_sent_pairs.discard(key)
+        if task and not task.done():
+            task.cancel()
+        if not task:
+            await call.answer("این درخواست دیگه منقضی شده", show_alert=True)
+            return
+        await call.answer("رد شد", show_alert=False)
         await bot.send_message(requester_id, "❌ حریف درخواست بازی مجدد رو رد کرد")
         await call.message.edit_text("درخواست بازی مجدد رد شد")
     except Exception:
@@ -904,14 +919,36 @@ async def rematch_decline_callback(call: CallbackQuery, bot: Bot) -> None:
 
 @router.callback_query(F.data.startswith("rematch_accept:"))
 async def rematch_accept_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
-    await call.answer()
     try:
         requester_id = int(call.data.split(":")[1])
-        for key, task in list(rematch_timeout_tasks.items()):
-            if key[0] == requester_id and key[1] == call.from_user.id:
-                rematch_timeout_tasks.pop(key, None)
-                if not task.done():
-                    task.cancel()
+        key = (requester_id, call.from_user.id)
+        task = rematch_timeout_tasks.pop(key, None)
+        rematch_sent_pairs.discard(key)
+        if task and not task.done():
+            task.cancel()
+        if not task:
+            await call.answer("این درخواست دیگه منقضی شده", show_alert=True)
+            return
+        active_requester = await db.active_duel_for_user(requester_id)
+        active_opponent = await db.active_duel_for_user(call.from_user.id)
+        if active_requester or active_opponent:
+            await call.answer("یکی از شما وسط یه بازی دیگه‌ست", show_alert=True)
+            await call.message.edit_text("درخواست منقضی شد، یکی از دو طرف وسط یه بازی دیگه‌ست")
+            return
+        cost = await db.get_int("rematch_cost", 2)
+        requester_user = await db.get_user(requester_id)
+        opponent_user = await db.get_user(call.from_user.id)
+        if not requester_user or requester_user["coins"] < cost:
+            await call.answer("حریفت الان سکه کافی نداره", show_alert=True)
+            await call.message.edit_text("درخواست لغو شد، حریف سکه کافی نداره")
+            return
+        if not opponent_user or opponent_user["coins"] < cost:
+            await call.answer(f"برای قبول درخواست {cost} سکه لازم داری", show_alert=True)
+            return
+        await call.answer()
+        if cost:
+            await db.change_coins(requester_id, -cost, "rematch_entry")
+            await db.change_coins(call.from_user.id, -cost, "rematch_entry")
         token = invite_token()
         duel_id = await db.create_invite_duel(requester_id, token)
         await db.join_duel(duel_id, call.from_user.id)

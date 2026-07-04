@@ -129,6 +129,14 @@ def review_question_keyboard(qid: int) -> InlineKeyboardMarkup:
     ]])
 
 
+def broadcast_confirm_keyboard() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ ارسال به همه", callback_data="broadcast_confirm")
+    b.button(text="❌ لغو", callback_data="broadcast_cancel")
+    b.adjust(1)
+    return b.as_markup()
+
+
 def admin_panel() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     for text, data in [
@@ -394,7 +402,7 @@ def admin_submenu_keyboard(kind: str) -> InlineKeyboardMarkup:
         "league": [("📊 مدیریت لول‌ها", "admin:levels"), ("🏅 مدیریت لقب‌ها", "admin:titles"), ("🏆 مدیریت لیگ‌ها", "admin:leagues"), ("✏️ ویرایش متن‌های انیمیشن", "admin:settings")],
         "reports": [("📊 آمار", "admin:stats"), ("💾 بک‌آپ کامل", "admin:backup"), ("❓ بک‌آپ سوالات", "admin:backup_questions"), ("👥 بک‌آپ کاربران", "admin:backup_users"), ("⚙️ بک‌آپ تنظیمات", "admin:backup_settings")],
         "file": [("📤 آپلود بک‌آپ", "admin:upload_backup"), ("💾 بک‌آپ کامل", "admin:backup")],
-        "notifications": [("🖼 عکس استارت", "admin:start_photo"), ("🛠 تغییر حالت تعمیر", "admin:maintenance_toggle"), ("⚙️ متن‌ها", "admin:settings")],
+        "notifications": [("📢 پیام همگانی", "admin:broadcast"), ("🖼 عکس استارت", "admin:start_photo"), ("🛠 تغییر حالت تعمیر", "admin:maintenance_toggle"), ("⚙️ متن‌ها", "admin:settings")],
     }
     b = InlineKeyboardBuilder()
     for text, data in menus.get(kind, []):

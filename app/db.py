@@ -448,6 +448,7 @@ class Database:
             "bot_duel_xp_per_correct": ("2", "XP for each correct answer in a bot duel"),
             "bot_duel_win_coins": ("5", "Coins for winning a bot duel"),
             "bot_duel_win_xp": ("10", "XP for winning a bot duel"),
+            "rematch_cost": ("2", "Coins charged to each player when a rematch is accepted"),
             "matchmaking_timeout_seconds": ("120", "Random matchmaking timeout seconds"),
             "maintenance_mode": ("0", "1 disables bot for non-admin users"),
             "maintenance_text": ("بات موقتاً در حال تعمیر است. لطفاً بعداً دوباره تلاش کنید.", "Shown during maintenance"),
@@ -685,6 +686,13 @@ class Database:
 
     async def all_admin_ids(self) -> list[int]:
         rows = await self.fetchall("SELECT telegram_id FROM admins")
+        return [int(r["telegram_id"]) for r in rows]
+
+    async def all_user_ids(self, exclude_blocked: bool = True) -> list[int]:
+        sql = "SELECT telegram_id FROM users"
+        if exclude_blocked:
+            sql += " WHERE is_blocked=0"
+        rows = await self.fetchall(sql)
         return [int(r["telegram_id"]) for r in rows]
 
     async def get_setting(self, key: str, default: str = "") -> str:
