@@ -1,6 +1,6 @@
 import logging
 from aiogram import Bot, Router, F
-from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
+from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from app.db import Database
 from app.keyboards import (
@@ -17,8 +17,7 @@ router = Router()
 
 @router.message(F.text == "🛒 فروشگاه")
 async def shop_entry(message: Message) -> None:
-    await message.answer("🛒 فروشگاه", reply_markup=ReplyKeyboardRemove())
-    await message.answer("نوع بسته رو انتخاب کن", reply_markup=shop_sections_keyboard())
+    await message.answer("🛒 فروشگاه\nنوع بسته رو انتخاب کن", reply_markup=shop_sections_keyboard())
 
 
 @router.callback_query(F.data == "shop_back:sections")

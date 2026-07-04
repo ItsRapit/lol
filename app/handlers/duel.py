@@ -6,7 +6,7 @@ import random
 import time
 from dataclasses import dataclass, field
 from aiogram import Bot, Router, F
-from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
+from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 
 from app.db import Database, now_iso
@@ -63,8 +63,7 @@ async def duel_entry(message: Message, db: Database) -> None:
         return
     random_cost = await db.get_int('random_duel_cost', 5)
     bot_cost = await db.get_int('bot_duel_cost', 3)
-    await message.answer("⚔️ دوئل", reply_markup=ReplyKeyboardRemove())
-    await message.answer("یکی رو انتخاب کن", reply_markup=duel_menu(random_cost, bot_cost))
+    await message.answer("⚔️ دوئل\nیکی رو انتخاب کن", reply_markup=duel_menu(random_cost, bot_cost))
 
 
 @router.callback_query(F.data == "duel:random")
@@ -96,8 +95,7 @@ async def random_duel(call: CallbackQuery, db: Database, bot: Bot) -> None:
             duel_id = await db.create_waiting_duel(call.from_user.id)
             timeout = await db.get_int('matchmaking_timeout_seconds', 120)
             queue_timeout_tasks[duel_id] = asyncio.create_task(random_queue_timeout(duel_id, call.from_user.id, cost, timeout, db, bot))
-            await call.message.answer("در صف انتظار قرار گرفتی", reply_markup=ReplyKeyboardRemove())
-            await call.message.answer(f"حداکثر {timeout} ثانیه منتظر حریف می‌مونی\nاگه حریفی پیدا نشه صف لغو میشه و {cost} سکه برمی‌گرده", reply_markup=waiting_queue_keyboard(duel_id))
+            await call.message.answer(f"در صف انتظار قرار گرفتی\nحداکثر {timeout} ثانیه منتظر حریف می‌مونی\nاگه حریفی پیدا نشه صف لغو میشه و {cost} سکه برمی‌گرده", reply_markup=waiting_queue_keyboard(duel_id))
         await call.answer()
     except Exception:
         logger.exception("Random duel failed")
@@ -234,7 +232,6 @@ async def offer_genres(duel_id: int, db: Database, bot: Bot) -> None:
             continue
         user_genre_temp[(duel_id, uid)] = set()
         user_offer_temp[(duel_id, uid)] = offers[uid]
-        await bot.send_message(uid, "منوی پایین بسته شد", reply_markup=ReplyKeyboardRemove())
         await bot.send_message(uid, f"از ژانرهای زیر دقیقاً {choose_n} مورد رو انتخاب کن", reply_markup=genres_keyboard(duel_id, offers[uid], set(), choose_n))
         old_task = genre_timeout_tasks.pop((duel_id, uid), None)
         if old_task and not old_task.done():
@@ -389,7 +386,7 @@ async def send_current_question(duel_id: int, db: Database, bot: Bot) -> None:
 async def bot_answer_question(duel_id: int, qid: int, level: int, timer_seconds: int, db: Database) -> None:
     """Simulates the bot opponent answering after a random human-like delay."""
     try:
-        delay = min(random.uniform(2.0, 12.0), max(1.0, timer_seconds - 1.0))
+        delay = min(random.uniform(2.0, 5.0), max(1.0, timer_seconds - 1.0))
         await asyncio.sleep(delay)
         duel = await db.get_duel(duel_id)
         q = await db.fetchone("SELECT * FROM questions WHERE id=?", (qid,))

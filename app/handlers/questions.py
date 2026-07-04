@@ -1,6 +1,6 @@
 import logging
 from aiogram import Bot, Router, F
-from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from app.db import Database, now_iso
 from app.keyboards import review_question_keyboard, cancel_keyboard, main_menu, submission_genre_keyboard
@@ -70,8 +70,7 @@ async def q_correct(message: Message, state: FSMContext, db: Database) -> None:
         await state.update_data(correct=n)
         await state.set_state(QuestionSubmit.genre)
         genres = await db.all_genres()
-        await message.answer("ژانرت رو انتخاب کن", reply_markup=ReplyKeyboardRemove())
-        await message.answer("ژانرها", reply_markup=submission_genre_keyboard(genres))
+        await message.answer("ژانرت رو انتخاب کن", reply_markup=submission_genre_keyboard(genres))
     except ValueError:
         await message.answer("فقط عدد ۱ تا ۴ قابل قبوله")
 
