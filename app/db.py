@@ -587,6 +587,29 @@ class Database:
             await self.change_xp(user_id, xp, "quest_reward")
         return {"coins": coins, "xp": xp, "title": row["title"]}
 
+    async def claim_all_quest_rewards(self, user_id: int) -> dict[str, Any] | None:
+        """Claims every completed-but-unclaimed quest for today at once. Returns totals, or None if nothing to claim."""
+        date_key = tehran_date_key()
+        rows = await self.fetchall(
+            """SELECT udq.*, qt.reward_coins, qt.reward_xp
+               FROM user_daily_quests udq JOIN quest_templates qt ON qt.id=udq.quest_template_id
+               WHERE udq.user_id=? AND udq.date=? AND udq.completed=1 AND udq.claimed=0""",
+            (user_id, date_key),
+        )
+        if not rows:
+            return None
+        total_coins = 0
+        total_xp = 0
+        for row in rows:
+            await self.execute_write("UPDATE user_daily_quests SET claimed=1 WHERE id=?", (row["id"],))
+            total_coins += int(row["reward_coins"])
+            total_xp += int(row["reward_xp"])
+        if total_coins:
+            await self.change_coins(user_id, total_coins, "quest_reward")
+        if total_xp:
+            await self.change_xp(user_id, total_xp, "quest_reward")
+        return {"coins": total_coins, "xp": total_xp, "count": len(rows)}
+
     async def users_with_incomplete_quests_today(self) -> list[aiosqlite.Row]:
         date_key = tehran_date_key()
         return await self.fetchall(

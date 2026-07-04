@@ -42,9 +42,7 @@ def duel_menu(random_cost: int = 5, bot_cost: int = 3) -> InlineKeyboardMarkup:
 
 def quests_keyboard(quests: list) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    for q in quests:
-        if q['completed'] and not q['claimed']:
-            b.button(text=f"🎁 دریافت جایزه «{q['title']}»", callback_data=f"quest_claim:{q['id']}")
+    b.button(text="🎁 دریافت جایزه", callback_data="quest_claim_all")
     b.adjust(1)
     return b.as_markup()
 
