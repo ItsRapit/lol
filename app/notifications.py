@@ -112,3 +112,13 @@ async def send_streak_notification(bot: Bot, user_id: int, reward: dict | None) 
         await bot.send_message(user_id, f"🎁 کمک روزانه روز {day}\n<b>{coins} سکه</b> به حسابت اضافه شد\nموجودی فعلی <b>{balance} سکه</b>")
     except Exception:
         logger.exception("Daily aid notification failed")
+
+
+async def send_quest_completed_notifications(bot: Bot, user_id: int, just_completed: list) -> None:
+    if not just_completed:
+        return
+    try:
+        for _ in just_completed:
+            await bot.send_message(user_id, "🎯 تکمیل شد\nیکی از کوئست‌های امروزت رو زدی، برو از بخش کوئست روزانه جایزه‌ات رو بردار")
+    except Exception:
+        logger.exception("Quest completed notification failed")

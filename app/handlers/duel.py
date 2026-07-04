@@ -322,7 +322,7 @@ async def genre_done(call: CallbackQuery, db: Database, bot: Bot) -> None:
                     genre_timeout_tasks.pop(key, None)
             selected_genres = list(dict.fromkeys(list(choices[duel['player1_id']]) + list(choices[duel['player2_id']])))
             count = await db.get_int('duel_question_count', 7)
-            qs = await db.start_duel_questions(duel_id, selected_genres, count)
+            qs = await db.start_duel_questions(duel_id, selected_genres, count, bot=bot)
             if not qs:
                 cost = await db.get_int(duel_entry_cost_key(duel), 5)
                 await bot.send_message(duel['player1_id'], "تو ژانرهای انتخاب‌شده سوال فعالی پیدا نشد، هزینه پرداختیت برگشت")
@@ -380,11 +380,11 @@ async def send_current_question(duel_id: int, db: Database, bot: Bot) -> None:
             rt.timeout_task.cancel()
         rt.timeout_task = asyncio.create_task(timeout_question(duel_id, q['id'], timer, db, bot))
         if duel['opponent_type'] == 'bot':
-            asyncio.create_task(bot_answer_question(duel_id, q['id'], int(duel['bot_level'] or 3), timer, db))
+            asyncio.create_task(bot_answer_question(duel_id, q['id'], int(duel['bot_level'] or 3), timer, db, bot))
 
 
-async def bot_answer_question(duel_id: int, qid: int, level: int, timer_seconds: int, db: Database) -> None:
-    """Simulates the bot opponent answering after a random human-like delay."""
+async def bot_answer_question(duel_id: int, qid: int, level: int, timer_seconds: int, db: Database, bot: Bot) -> None:
+    """Simulates the bot opponent answering after a short delay."""
     try:
         delay = min(random.uniform(2.0, 5.0), max(1.0, timer_seconds - 1.0))
         await asyncio.sleep(delay)
@@ -402,7 +402,14 @@ async def bot_answer_question(duel_id: int, qid: int, level: int, timer_seconds:
             wrong_options = [i for i in range(1, 5) if i != correct_option]
             selected = random.choice(wrong_options)
         response_ms = int(delay * 1000)
-        await db.record_answer(duel_id, qid, BOT_OPPONENT_ID, selected, correct_option, response_ms)
+        await db.record_answer(duel_id, qid, BOT_OPPONENT_ID, selected, correct_option, response_ms, bot=bot)
+        if await db.answered_count_for_question(duel_id, qid) >= 2:
+            rt = runtime(duel_id)
+            if rt.timeout_task and not rt.timeout_task.done():
+                rt.timeout_task.cancel()
+            await edit_duel_question_results(duel_id, qid, db, bot)
+            await asyncio.sleep(1.2)
+            await advance_duel(duel_id, db, bot, qid)
     except asyncio.CancelledError:
         return
     except Exception:
@@ -497,7 +504,7 @@ async def timeout_question(duel_id: int, qid: int, seconds: int, db: Database, b
         for uid in [duel['player1_id'], duel['player2_id']]:
             if await db.has_answered(duel_id, qid, uid):
                 continue
-            await db.record_answer(duel_id, qid, uid, None, q['correct_option'], None)
+            await db.record_answer(duel_id, qid, uid, None, q['correct_option'], None, bot=bot)
             unanswered_streaks[(duel_id, uid)] = unanswered_streaks.get((duel_id, uid), 0) + 1
             inactive_now.append(uid)
         if any(unanswered_streaks.get((duel_id, uid), 0) >= 3 for uid in [duel['player1_id'], duel['player2_id']]):
@@ -530,7 +537,7 @@ async def answer_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
         explanation = f"\n\n{q['explanation']}" if 'explanation' in q.keys() and q['explanation'] else ""
         attempt = 1
         score = 1.0 if opt == q['correct_option'] else 0.0
-        inserted = await db.record_answer(duel_id, qid, call.from_user.id, opt, q['correct_option'], ms, answer_score=score, attempt=attempt)
+        inserted = await db.record_answer(duel_id, qid, call.from_user.id, opt, q['correct_option'], ms, answer_score=score, attempt=attempt, bot=bot)
         if not inserted:
             await call.answer("قبلاً جواب دادی", show_alert=True)
             return
@@ -578,7 +585,7 @@ async def advance_duel(duel_id: int, db: Database, bot: Bot, expected_qid: int |
 
 
 async def finish_and_notify(duel_id: int, db: Database, bot: Bot) -> None:
-    result = await db.finish_duel(duel_id)
+    result = await db.finish_duel(duel_id, bot=bot)
     duel = await db.get_duel(duel_id)
     if not duel or not result:
         return
@@ -699,7 +706,7 @@ async def powerup_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
         rt = runtime(duel_id)
         ms = int((time.monotonic() - rt.question_started_at) * 1000)
         correct_option = int(q['correct_option'])
-        inserted = await db.record_answer(duel_id, qid, call.from_user.id, correct_option, correct_option, ms, answer_score=1.0, attempt=1)
+        inserted = await db.record_answer(duel_id, qid, call.from_user.id, correct_option, correct_option, ms, answer_score=1.0, attempt=1, bot=bot)
         if not inserted:
             await call.message.answer("قبلاً جواب دادی")
             return

@@ -546,7 +546,7 @@ class Database:
             (user_id, date_key),
         )
 
-    async def bump_quest_progress(self, user_id: int, goal_type: str, amount: int = 1) -> list[aiosqlite.Row]:
+    async def bump_quest_progress(self, user_id: int, goal_type: str, amount: int = 1, bot: Any = None) -> list[aiosqlite.Row]:
         """Advances progress on any of today's active quests matching goal_type. Returns quests that just completed."""
         date_key = tehran_date_key()
         rows = await self.fetchall(
@@ -561,6 +561,12 @@ class Database:
             await self.execute_write("UPDATE user_daily_quests SET progress=?, completed=? WHERE id=?", (new_progress, completed, r["id"]))
             if completed:
                 just_completed.append(r)
+        if just_completed and bot is not None:
+            try:
+                from app.notifications import send_quest_completed_notifications
+                await send_quest_completed_notifications(bot, user_id, just_completed)
+            except Exception:
+                logger.exception("Quest completion notify failed for user=%s", user_id)
         return just_completed
 
     async def claim_quest_reward(self, user_id: int, quest_id: int) -> dict[str, Any] | None:
@@ -984,7 +990,7 @@ class Database:
         params.append(limit)
         return await self.fetchall(sql, params)
 
-    async def start_duel_questions(self, duel_id: int, genres: list[str], count: int) -> list[aiosqlite.Row]:
+    async def start_duel_questions(self, duel_id: int, genres: list[str], count: int, bot: Any = None) -> list[aiosqlite.Row]:
         # Balanced random selection: try to include questions from all selected genres, without duplicates.
         unique_genres = list(dict.fromkeys(genres))
         per_genre: dict[str, list[aiosqlite.Row]] = {}
@@ -1016,7 +1022,7 @@ class Database:
             if duel:
                 for uid in [duel["player1_id"], duel["player2_id"]]:
                     if uid and uid != self.BOT_OPPONENT_ID:
-                        await self.bump_quest_progress(uid, "start_duels", 1)
+                        await self.bump_quest_progress(uid, "start_duels", 1, bot=bot)
         return qs
 
     async def duel_question_by_seq(self, duel_id: int, seq: int) -> aiosqlite.Row | None:
@@ -1026,7 +1032,7 @@ class Database:
         row = await self.fetchone("SELECT COUNT(*) c FROM duel_questions WHERE duel_id=?", (duel_id,))
         return int(row["c"] if row else 0)
 
-    async def record_answer(self, duel_id: int, qid: int, user_id: int, selected: int | None, correct_option: int, response_ms: int | None, answer_score: float | None = None, attempt: int = 1) -> bool:
+    async def record_answer(self, duel_id: int, qid: int, user_id: int, selected: int | None, correct_option: int, response_ms: int | None, answer_score: float | None = None, attempt: int = 1, bot: Any = None) -> bool:
         is_correct = int(selected == correct_option) if selected is not None else 0
         score = float(answer_score if answer_score is not None else is_correct)
         try:
@@ -1037,7 +1043,7 @@ class Database:
             if user_id != self.BOT_OPPONENT_ID:
                 await self.execute_write("UPDATE users SET correct_answers=correct_answers+?, total_answers=total_answers+? WHERE telegram_id=?", (is_correct, 1 if selected else 0, user_id))
                 if is_correct:
-                    await self.bump_quest_progress(user_id, "correct_answers", 1)
+                    await self.bump_quest_progress(user_id, "correct_answers", 1, bot=bot)
             return True
         except Exception:
             logger.exception("Could not record answer duel=%s q=%s user=%s", duel_id, qid, user_id)
@@ -1081,7 +1087,7 @@ class Database:
 
     BOT_OPPONENT_ID = -1001  # keep in sync with handlers/duel.py
 
-    async def finish_duel(self, duel_id: int) -> dict[str, Any]:
+    async def finish_duel(self, duel_id: int, bot: Any = None) -> dict[str, Any]:
         duel = await self.get_duel(duel_id)
         if not duel:
             return {}
@@ -1133,7 +1139,7 @@ class Database:
                 if league:
                     await self.change_cups(uid, int(league["win_cups"]), "duel_win", duel_id, league["id"])
                 await self.execute_write("UPDATE users SET wins=wins+1, last_duel_at=? WHERE telegram_id=?", (now_iso(), uid))
-                await self.bump_quest_progress(uid, "win_duels", 1)
+                await self.bump_quest_progress(uid, "win_duels", 1, bot=bot)
             elif winner is None:
                 if draw_coin_reward:
                     await self.change_coins(uid, draw_coin_reward, "duel_draw_reward", duel_id)

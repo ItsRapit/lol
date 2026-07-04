@@ -221,12 +221,15 @@ async def daily_quests(message: Message, db: Database) -> None:
         progress = min(int(q['progress']), int(q['goal_count']))
         goal = int(q['goal_count'])
         if q['claimed']:
-            status = "گرفتی"
+            mark = "✅"
+            status = "تکمیل شد"
         elif q['completed']:
+            mark = "✅"
             status = "آماده دریافت"
         else:
+            mark = "⬜"
             status = f"{progress}/{goal}"
-        lines.append(f"{q['title']} — {status}\n{q['description']}\nجایزه {q['reward_coins']} سکه + {q['reward_xp']} XP")
+        lines.append(f"{mark} {q['title']} — {status}\n{q['description']}\n🎁 {q['reward_coins']} سکه + {q['reward_xp']} XP")
     await message.answer("\n\n".join(lines), reply_markup=ReplyKeyboardRemove())
     await message.answer("برای دریافت جایزه یکی از دکمه‌ها رو بزن", reply_markup=quests_keyboard(quests))
 
@@ -246,13 +249,18 @@ async def quest_claim(call: CallbackQuery, db: Database) -> None:
             progress = min(int(q['progress']), int(q['goal_count']))
             goal = int(q['goal_count'])
             if q['claimed']:
-                status = "گرفتی"
+                mark = "✅"
+                status = "تکمیل شد"
             elif q['completed']:
+                mark = "✅"
                 status = "آماده دریافت"
             else:
+                mark = "⬜"
                 status = f"{progress}/{goal}"
-            lines.append(f"{q['title']} — {status}\n{q['description']}\nجایزه {q['reward_coins']} سکه + {q['reward_xp']} XP")
+            lines.append(f"{mark} {q['title']} — {status}\n{q['description']}\n🎁 {q['reward_coins']} سکه + {q['reward_xp']} XP")
         await call.message.edit_text("\n\n".join(lines), reply_markup=quests_keyboard(quests))
+        if quests and all(q['claimed'] for q in quests):
+            await call.message.answer("🔥 امروز فعال بودی\nکل کوئست‌های امروز رو تموم کردی، می‌تونی تا فردا منتظر بمونی")
     except Exception:
         logger.exception("Quest claim failed")
         await call.answer("خطا", show_alert=True)
