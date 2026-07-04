@@ -230,8 +230,7 @@ async def daily_quests(message: Message, db: Database) -> None:
             mark = "⬜"
             status = f"{progress}/{goal}"
         lines.append(f"{mark} {q['title']} — {status}\n{q['description']}\n🎁 {q['reward_coins']} سکه + {q['reward_xp']} XP")
-    await message.answer("\n\n".join(lines))
-    await message.answer("🎁 دریافت جایزه", reply_markup=quests_keyboard(quests))
+    await message.answer("\n\n".join(lines), reply_markup=quests_keyboard(quests))
 
 
 @router.callback_query(F.data == "quest_claim_all")
@@ -257,11 +256,9 @@ async def quest_claim_all(call: CallbackQuery, db: Database) -> None:
                 mark = "⬜"
                 status = f"{progress}/{goal}"
             lines.append(f"{mark} {q['title']} — {status}\n{q['description']}\n🎁 {q['reward_coins']} سکه + {q['reward_xp']} XP")
-        await call.message.edit_text("\n\n".join(lines))
+        await call.message.edit_text("\n\n".join(lines), reply_markup=quests_keyboard(quests))
         if quests and all(q['claimed'] for q in quests):
             await call.message.answer("🔥 امروز فعال بودی\nکل کوئست‌های امروز تموم شد و جایزه هارو گرفتی\nفردا یه سری کوئست جدید منتظر")
-        else:
-            await call.message.answer("🎁 دریافت جایزه", reply_markup=quests_keyboard(quests))
     except Exception:
         logger.exception("Quest claim failed")
         await call.answer("خطا", show_alert=True)
