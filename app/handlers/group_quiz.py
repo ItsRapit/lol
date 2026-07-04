@@ -109,15 +109,14 @@ def group_question_text(game: GroupGame, idx: int, remaining: int, total_seconds
         opts = [q['option1'], q['option2'], q['option3'], q['option4']]
         correct = opts[int(q['correct_option']) - 1]
         return (
-            f"❓ سوال {idx+1} از {len(game.questions)}\n"
-            f"━━━━━━━━━━━━━━\n{q['text']}\n━━━━━━━━━━━━━━\n"
-            f"✅ جواب درست: {correct}\n"
-            f"━━━━━━━━━━━━━━\n"
+            f"❓ سوال {idx+1} از {len(game.questions)}\n\n"
+            f"{q['text']}\n\n"
+            f"✅ جواب درست {correct}\n\n"
             f"{player_progress_lines(game, idx)}"
         )
     return (
-        f"❓ سوال {idx+1} از {len(game.questions)}\n"
-        f"━━━━━━━━━━━━━━\n{q['text']}\n━━━━━━━━━━━━━━\n"
+        f"❓ سوال {idx+1} از {len(game.questions)}\n\n"
+        f"{q['text']}\n\n"
         f"{player_progress_lines(game, idx)}\n"
         f"✅ {answered_count}/{total} نفر جواب دادن"
     )
@@ -149,7 +148,7 @@ async def ensure_user_started_callback(call: CallbackQuery, db: Database, referr
     if not user_exists:
         payload = f"ref_{referrer_id}" if referrer_id else "from_group_game"
         await call.answer(
-            text="چالشینو\n\nابتدا ربات را استارت کنید",
+            text="چالشینو\n\nاول ربات رو استارت کن",
             show_alert=True,
             url=f"https://t.me/ChalleshinoBot?start={payload}",
         )
@@ -166,7 +165,7 @@ async def require_force_join(call: CallbackQuery, db: Database, bot: Bot) -> boo
     if ok:
         return True
     await call.answer(
-        text="ربات را مجدداً استارت کنید",
+        text="ربات رو دوباره استارت کن",
         show_alert=True,
         url="https://t.me/ChalleshinoBot?start=force_join",
     )
@@ -177,7 +176,7 @@ async def require_registered_and_join(call: CallbackQuery, db: Database, bot: Bo
     user = await db.get_user(call.from_user.id)
     if not user:
         await call.answer(
-            text="برای شرکت در بازی، ابتدا ربات را استارت کنید 👇 @ChalleshinoBot",
+            text="برای شرکت تو بازی اول ربات رو استارت کن 👇 @ChalleshinoBot",
             show_alert=True,
         )
         return False
@@ -210,9 +209,9 @@ async def lobby_timeout(lobby_id: str, bot: Bot) -> None:
         lobbies.pop(lobby_id, None)
         try:
             if lobby.inline_message_id:
-                await bot.edit_message_text("⏰ لابی بازی به دلیل عدم شروع در 10 دقیقه بسته شد.", inline_message_id=lobby.inline_message_id, reply_markup=group_replay_keyboard())
+                await bot.edit_message_text("⏰ لابی بازی به دلیل عدم شروع تو ۱۰ دقیقه بسته شد", inline_message_id=lobby.inline_message_id, reply_markup=group_replay_keyboard())
             elif lobby.chat_id and lobby.message_id:
-                await bot.edit_message_text("⏰ لابی بازی به دلیل عدم شروع در 10 دقیقه بسته شد.", chat_id=lobby.chat_id, message_id=lobby.message_id, reply_markup=group_replay_keyboard())
+                await bot.edit_message_text("⏰ لابی بازی به دلیل عدم شروع تو ۱۰ دقیقه بسته شد", chat_id=lobby.chat_id, message_id=lobby.message_id, reply_markup=group_replay_keyboard())
         except Exception:
             logger.warning("Lobby timeout edit failed", exc_info=True)
     except asyncio.CancelledError:
@@ -338,12 +337,12 @@ async def edit_lobby(bot: Bot, lobby: GroupLobby, text: str, reply_markup=None) 
 @router.message(Command("quiz"))
 async def group_quiz_start(message: Message, db: Database, bot: Bot) -> None:
     if message.chat.type == "private":
-        await message.answer("این دستور برای گروه‌هاست.")
+        await message.answer("این دستور برای گروه‌هاست")
         return
     if not await db.get_user(message.from_user.id):
         me = await bot.get_me()
         await message.answer(
-            "برای شروع بازی گروهی اول باید ربات را در پیوی استارت کنید 👇",
+            "برای شروع بازی گروهی اول باید ربات رو تو پی‌وی استارت کنی 👇",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎯 شروع ربات", url=f"https://t.me/{me.username}")]])
         )
         return
@@ -351,7 +350,7 @@ async def group_quiz_start(message: Message, db: Database, bot: Bot) -> None:
         await message.answer("تا بازی فعلیت تموم نشده نمی‌تونی بازی جدید شروع کنی")
         return
     if len(active_lobbies_in_chat(message.chat.id)) >= 3:
-        await message.answer("در این گروه 3 لابی فعال وجود داره. صبر کن یکی تموم بشه")
+        await message.answer("تو این گروه ۳ لابی فعال هست، صبر کن یکی تموم بشه")
         return
     lobby_id = f"chat_{abs(message.chat.id)}_{message.message_id}"
     lobby = GroupLobby(lobby_id=lobby_id, starter_id=message.from_user.id, chat_id=message.chat.id)
@@ -451,7 +450,7 @@ async def inline_join_redirect(call: CallbackQuery, db: Database, bot: Bot) -> N
         return
     lobby = next((l for l in lobbies.values() if l.inline_message_id == inline_id), None)
     if not lobby:
-        await call.answer("بازی پیدا نشد. Inline Feedback را در BotFather روی 100% بگذار و دوباره تلاش کن.", show_alert=False)
+        await call.answer("بازی پیدا نشد، Inline Feedback رو تو BotFather روی ۱۰۰٪ بذار و دوباره امتحان کن", show_alert=False)
         return
     if not await ensure_user_started_callback(call, db, lobby.starter_id):
         return
@@ -476,7 +475,7 @@ async def inline_group_quiz_leave(call: CallbackQuery, bot: Bot) -> None:
         await call.answer("لابی پیدا نشد", show_alert=False)
         return
     if call.from_user.id not in lobby.players:
-        await call.answer("شما داخل این لابی نیستید", show_alert=False)
+        await call.answer("تو این لابی نیستی", show_alert=False)
         return
     await close_or_update_group_lobby_after_leave(bot, lobby, call.from_user.id)
 
@@ -490,7 +489,7 @@ async def group_quiz_leave(call: CallbackQuery, bot: Bot) -> None:
         await call.answer("لابی پیدا نشد", show_alert=False)
         return
     if call.from_user.id not in lobby.players:
-        await call.answer("شما داخل این لابی نیستید", show_alert=False)
+        await call.answer("تو این لابی نیستی", show_alert=False)
         return
     await close_or_update_group_lobby_after_leave(bot, lobby, call.from_user.id)
 
@@ -505,19 +504,19 @@ async def group_quiz_genre_select(call: CallbackQuery, db: Database, bot: Bot) -
             await call.answer("لابی پیدا نشد", show_alert=False)
             return
         if call.from_user.id != lobby.starter_id:
-            await call.answer("فقط سازنده ژانرهای بازی را انتخاب می‌کند", show_alert=False)
+            await call.answer("فقط سازنده ژانرهای بازی رو انتخاب می‌کنه", show_alert=False)
             return
         try:
             genre = lobby.offered_genres[int(idx_s)]
         except Exception:
-            await call.answer("ژانر نامعتبر است", show_alert=False)
+            await call.answer("ژانر نامعتبره", show_alert=False)
             return
         if genre in lobby.selected_genres:
             lobby.selected_genres.remove(genre)
         elif len(lobby.selected_genres) < 2:
             lobby.selected_genres.append(genre)
         else:
-            await call.answer("دقیقاً 2 ژانر انتخاب کن", show_alert=False)
+            await call.answer("دقیقاً ۲ ژانر انتخاب کن", show_alert=False)
             return
         await edit_lobby(bot, lobby, lobby_text(lobby, await db.get_int("group_quiz_max_players", 8)), group_genre_keyboard(lobby))
     except Exception:
@@ -534,10 +533,10 @@ async def group_quiz_continue_settings(call: CallbackQuery, db: Database, bot: B
             await call.answer("لابی پیدا نشد", show_alert=False)
             return
         if call.from_user.id != lobby.starter_id:
-            await call.answer("فقط سازنده می‌تواند ادامه دهد", show_alert=False)
+            await call.answer("فقط سازنده می‌تونه ادامه بده", show_alert=False)
             return
         if len(lobby.selected_genres) != 2:
-            await call.answer("اول 2 ژانر انتخاب کن", show_alert=False)
+            await call.answer("اول ۲ ژانر انتخاب کن", show_alert=False)
             return
         lobby.stage = "settings"
         await edit_lobby(bot, lobby, lobby_text(lobby, await db.get_int("group_quiz_max_players", 8)), group_settings_keyboard(lobby))
@@ -554,7 +553,7 @@ async def group_quiz_set_time(call: CallbackQuery, db: Database, bot: Bot) -> No
             await call.answer("لابی پیدا نشد", show_alert=False)
             return
         if call.from_user.id != lobby.starter_id:
-            await call.answer("فقط سازنده بازی می‌تواند این گزینه را تغییر دهد", show_alert=False)
+            await call.answer("فقط سازنده بازی می‌تونه این گزینه رو تغییر بده", show_alert=False)
             return
         await call.answer()
         lobby.timer_seconds = int(sec_s)
@@ -572,7 +571,7 @@ async def group_quiz_set_count(call: CallbackQuery, db: Database, bot: Bot) -> N
             await call.answer("لابی پیدا نشد", show_alert=False)
             return
         if call.from_user.id != lobby.starter_id:
-            await call.answer("فقط سازنده بازی می‌تواند این گزینه را تغییر دهد", show_alert=False)
+            await call.answer("فقط سازنده بازی می‌تونه این گزینه رو تغییر بده", show_alert=False)
             return
         await call.answer()
         lobby.question_count = int(cnt_s)
@@ -589,22 +588,22 @@ async def inline_group_quiz_genre_select(call: CallbackQuery, db: Database, bot:
         lobby = await ensure_inline_group_lobby(token, call.inline_message_id)
         data = inline_group_pending.get(token)
         if not lobby or not data:
-            await call.answer("لابی پیدا نشد. دوباره بازی را بساز.", show_alert=False)
+            await call.answer("لابی پیدا نشد، دوباره بازی رو بساز", show_alert=False)
             return
         if call.from_user.id != lobby.starter_id:
-            await call.answer("فقط سازنده ژانرهای بازی را انتخاب می‌کند", show_alert=False)
+            await call.answer("فقط سازنده ژانرهای بازی رو انتخاب می‌کنه", show_alert=False)
             return
         try:
             genre = data["genres"][int(idx_s)]
         except Exception:
-            await call.answer("ژانر نامعتبر است", show_alert=False)
+            await call.answer("ژانر نامعتبره", show_alert=False)
             return
         if genre in data["selected"]:
             data["selected"].remove(genre)
         elif len(data["selected"]) < 2:
             data["selected"].append(genre)
         else:
-            await call.answer("دقیقاً 2 ژانر انتخاب کن", show_alert=False)
+            await call.answer("دقیقاً ۲ ژانر انتخاب کن", show_alert=False)
             return
         lobby.selected_genres = list(data["selected"])
         await edit_lobby(bot, lobby, inline_group_genre_text(data), inline_group_genre_keyboard(token))
@@ -623,10 +622,10 @@ async def inline_group_quiz_continue_settings(call: CallbackQuery, db: Database,
             await call.answer("لابی پیدا نشد", show_alert=False)
             return
         if call.from_user.id != lobby.starter_id:
-            await call.answer("فقط سازنده می‌تواند ادامه دهد", show_alert=False)
+            await call.answer("فقط سازنده می‌تونه ادامه بده", show_alert=False)
             return
         if len(data.get("selected", [])) != 2:
-            await call.answer("اول 2 ژانر انتخاب کن", show_alert=False)
+            await call.answer("اول ۲ ژانر انتخاب کن", show_alert=False)
             return
         lobby.selected_genres = list(data["selected"])
         lobby.stage = "settings"
@@ -643,7 +642,7 @@ async def inline_start_game(call: CallbackQuery, db: Database, bot: Bot) -> None
         return
     lobby = next((l for l in lobbies.values() if l.inline_message_id == inline_id), None)
     if not lobby:
-        await call.answer("بازی پیدا نشد. Inline Feedback را در BotFather روی 100% بگذار و دوباره تلاش کن.", show_alert=False)
+        await call.answer("بازی پیدا نشد، Inline Feedback رو تو BotFather روی ۱۰۰٪ بذار و دوباره امتحان کن", show_alert=False)
         return
     if call.from_user.id != lobby.starter_id:
         await call.answer("فقط کسی که بازی رو شروع کرده می‌تونه از این دکمه استفاده کنه", show_alert=False)
@@ -651,10 +650,10 @@ async def inline_start_game(call: CallbackQuery, db: Database, bot: Bot) -> None
     if not await require_registered_and_join(call, db, bot):
         return
     if lobby.stage != "settings":
-        await call.answer("اول ژانرها و تنظیمات بازی را کامل کن", show_alert=False)
+        await call.answer("اول ژانرها و تنظیمات بازی رو کامل کن", show_alert=False)
         return
     if len(lobby.players) < 2:
-        await call.answer("حداقل 2 نفر لازم است.", show_alert=False)
+        await call.answer("حداقل ۲ نفر لازمه", show_alert=False)
         return
     await call.answer()
     await start_lobby_game(call, db, bot, lobby)
@@ -676,7 +675,7 @@ async def join_lobby(call: CallbackQuery, db: Database, bot: Bot, lobby: GroupLo
     await call.answer()
     max_players = await db.get_int("group_quiz_max_players", 8)
     if len(lobby.players) >= max_players and call.from_user.id not in lobby.players:
-        await call.answer("ظرفیت تکمیل است.", show_alert=True)
+        await call.answer("ظرفیت تکمیله", show_alert=True)
         return
     lobby.players[call.from_user.id] = call.from_user.full_name
     lobby.usernames[call.from_user.id] = call.from_user.username
@@ -697,10 +696,10 @@ async def group_start_game(call: CallbackQuery, db: Database, bot: Bot) -> None:
     if not await require_registered_and_join(call, db, bot):
         return
     if lobby.stage != "settings":
-        await call.answer("اول ژانرها و تنظیمات بازی را کامل کن", show_alert=False)
+        await call.answer("اول ژانرها و تنظیمات بازی رو کامل کن", show_alert=False)
         return
     if len(lobby.players) < 2:
-        await call.answer("حداقل 2 نفر لازم است.", show_alert=False)
+        await call.answer("حداقل ۲ نفر لازمه", show_alert=False)
         return
     await call.answer()
     await start_lobby_game(call, db, bot, lobby)
@@ -711,7 +710,7 @@ async def start_lobby_game(call: CallbackQuery, db: Database, bot: Bot, lobby: G
         lobby.started = True
         if lobby.timeout_task and not lobby.timeout_task.done():
             lobby.timeout_task.cancel()
-        await edit_lobby(bot, lobby, "⏳ بازی در حال شروع...", None)
+        await edit_lobby(bot, lobby, "⏳ بازی داره شروع میشه", None)
         count = lobby.question_count
         if lobby.selected_genres:
             placeholders = ','.join('?' for _ in lobby.selected_genres)
@@ -719,14 +718,14 @@ async def start_lobby_game(call: CallbackQuery, db: Database, bot: Bot, lobby: G
         else:
             rows = await db.fetchall("SELECT * FROM questions WHERE status='active' ORDER BY RANDOM() LIMIT ?", (count,))
         if not rows:
-            await edit_lobby(bot, lobby, "سوال فعالی برای بازی گروهی وجود ندارد.", None)
+            await edit_lobby(bot, lobby, "سوال فعالی برای بازی گروهی نیست", None)
             return
         game = GroupGame(lobby=lobby, questions=rows, scores={uid: 0 for uid in lobby.players})
         games[lobby.lobby_id] = game
         await send_group_question(bot, db, game, 0)
     except Exception as e:
         logger.exception("Group quiz start error: %s", e)
-        await edit_lobby(bot, lobby, "❌ خطا در شروع بازی. دوباره امتحان کن.", None)
+        await edit_lobby(bot, lobby, "❌ خطا در شروع بازی، دوباره امتحان کن", None)
 
 
 async def send_group_question(bot: Bot, db: Database, game: GroupGame, idx: int) -> None:
@@ -756,18 +755,18 @@ async def group_answer(call: CallbackQuery, db: Database, bot: Bot) -> None:
         return
     idx, opt = int(idx_s), int(opt_s)
     if idx in game.resolved:
-        await call.answer("این سوال تمام شده", show_alert=False)
+        await call.answer("این سوال تموم شده", show_alert=False)
         return
     if call.from_user.id not in game.lobby.players:
-        await call.answer("شما عضو این بازی نیستید", show_alert=True)
+        await call.answer("تو عضو این بازی نیستی", show_alert=True)
         return
     if call.from_user.id in game.answered.setdefault(idx, {}):
-        await call.answer("قبلاً پاسخ دادی", show_alert=False)
+        await call.answer("قبلاً جواب دادی", show_alert=False)
         return
     game.answered[idx][call.from_user.id] = opt
     total = len(game.lobby.players)
     q = game.questions[idx]
-    result_text = "✅ پاسخ شما صحیح بود." if opt == int(q['correct_option']) else "❌ پاسخ شما اشتباه بود."
+    result_text = "✅ درست جواب دادی" if opt == int(q['correct_option']) else "❌ اشتباه جواب دادی"
     await call.answer(result_text, show_alert=False)
     if len(game.answered[idx]) >= total:
         task = game.timer_tasks.get(idx)
@@ -820,7 +819,7 @@ async def resolve_group_question(bot: Bot, db: Database, game: GroupGame, idx: i
         except Exception:
             logger.exception("Resolve group question failed")
             try:
-                await edit_lobby(bot, game.lobby, "❌ خطا در پایان سوال. بازی متوقف شد.", None)
+                await edit_lobby(bot, game.lobby, "❌ خطا در پایان سوال، بازی متوقف شد", None)
             except Exception:
                 logger.exception("Could not show group question error")
 
@@ -830,7 +829,7 @@ async def notify_levelup_in_group(bot: Bot, chat_id: int, username: str, old_lev
         "⬆️ ...",
         "⬆️⬆️ ...",
         "⬆️⬆️⬆️ ...",
-        f"🎉 تبریک {username}\n━━━━━━━━━━━\nلول {old_level} ← لول {new_level}\n{new_title}\n━━━━━━━━━━━",
+        f"🎉 تبریک {username}\nلول {old_level} ← لول {new_level}\n{new_title}",
     ]
     try:
         msg = await bot.send_message(chat_id, frames[0])
@@ -874,7 +873,7 @@ async def finish_group_game(bot: Bot, db: Database, game: GroupGame) -> None:
         await db.bump_quest_progress(uid, "play_group_games", 1)
         if pos == 1 and score > 0:
             await db.bump_quest_progress(uid, "group_first_place", 1)
-    text = "🏆 نتیجه‌ی بازی\n━━━━━━━━━━━━━━\n" + "\n".join(lines) + "\n━━━━━━━━━━━━━━\n\nبرای گزارش مشکل، دکمه گزارش را بزن."
+    text = "🏆 نتیجه بازی\n\n" + "\n".join(lines) + "\n\nبرای گزارش مشکل دکمه گزارش رو بزن"
     completed_group_games[game.lobby.lobby_id] = game
     await edit_lobby(bot, game.lobby, text, group_finished_keyboard(game.lobby.lobby_id, "gqreport"))
     for task in game.timer_tasks.values():
@@ -895,7 +894,7 @@ async def group_duel_accept(call: CallbackQuery, bot: Bot, db: Database) -> None
     try:
         inline_id = call.inline_message_id
         if not inline_id:
-            await call.answer("این دکمه فقط برای inline duel است", show_alert=False)
+            await call.answer("این دکمه فقط برای دوئل اینلاینه", show_alert=False)
             return
         lobby = next((l for l in lobbies.values() if l.inline_message_id == inline_id and l.lobby_id.startswith("gduel_")), None)
         if not lobby:
@@ -913,7 +912,7 @@ async def group_duel_accept(call: CallbackQuery, bot: Bot, db: Database) -> None
             await call.answer("خودت نمی‌تونی حریف خودت بشی", show_alert=False)
             return
         if len(lobby.players) >= 2:
-            await call.answer("این دوئل حریف دارد", show_alert=False)
+            await call.answer("این دوئل حریف داره", show_alert=False)
             return
         lobby.players[call.from_user.id] = call.from_user.full_name
         lobby.usernames[call.from_user.id] = call.from_user.username
@@ -943,17 +942,17 @@ async def group_duel_genre_selected(call: CallbackQuery, bot: Bot, db: Database)
         lobby = lobbies.get(lobby_id)
         offers = group_duel_offers.get(lobby_id, [])
         if not lobby or call.from_user.id not in lobby.players:
-            await call.answer("دوئل پیدا نشد یا شما عضو آن نیستید", show_alert=False)
+            await call.answer("دوئل پیدا نشد یا تو عضوش نیستی", show_alert=False)
             return
         try:
             genre = offers[int(idx_s)]
         except Exception:
-            await call.answer("ژانر نامعتبر است", show_alert=False)
+            await call.answer("ژانر نامعتبره", show_alert=False)
             return
         current = group_duel_genres.setdefault(lobby_id, {})
         taken_by = next((uid for uid, g in current.items() if g == genre and uid != call.from_user.id), None)
         if taken_by:
-            await call.answer("این ژانر قبلاً توسط حریف انتخاب شده", show_alert=False)
+            await call.answer("این ژانر رو حریف قبلاً انتخاب کرده", show_alert=False)
             return
         current[call.from_user.id] = genre
         lines = []
@@ -1000,8 +999,8 @@ def group_duel_question_text(game: GroupDuelGame, idx: int, remaining: int, tota
             ans = game.answered.get(idx, {}).get(uid)
             ok = ans == int(q['correct_option'])
             lines.append(f"{trim_name(name)}: {'✅' if ok else '❌'}" + (f" (+1)" if ok else ""))
-        return f"⚔️ دوئل | سوال {idx+1}/{len(game.questions)}\n━━━━━━━━━━━━━━\n{q['text']}\n✅ جواب درست: {opts[int(q['correct_option'])-1]}\n━━━━━━━━━━━━━━\n" + "\n".join(lines)
-    return f"⚔️ دوئل | سوال {idx+1}/{len(game.questions)}\n━━━━━━━━━━━━━━\n{q['text']}\n━━━━━━━━━━━━━━"
+        return f"⚔️ دوئل | سوال {idx+1}/{len(game.questions)}\n\n{q['text']}\n✅ جواب درست {opts[int(q['correct_option'])-1]}\n\n" + "\n".join(lines)
+    return f"⚔️ دوئل | سوال {idx+1}/{len(game.questions)}\n\n{q['text']}"
 
 
 async def start_group_duel(bot: Bot, db: Database, lobby: GroupLobby) -> None:
@@ -1042,10 +1041,10 @@ async def group_duel_answer(call: CallbackQuery, db: Database, bot: Bot) -> None
         return
     idx, opt = int(idx_s), int(opt_s)
     if call.from_user.id not in game.lobby.players:
-        await call.answer("شما عضو این دوئل نیستید", show_alert=True)
+        await call.answer("تو عضو این دوئل نیستی", show_alert=True)
         return
     if call.from_user.id in game.answered.setdefault(idx, {}):
-        await call.answer("قبلاً پاسخ دادی", show_alert=False)
+        await call.answer("قبلاً جواب دادی", show_alert=False)
         return
     game.answered[idx][call.from_user.id] = opt
     if len(game.answered[idx]) >= len(game.lobby.players):
@@ -1093,10 +1092,10 @@ async def finish_group_duel(bot: Bot, db: Database, game: GroupDuelGame) -> None
         if xp_amount:
             await db.change_xp(uid, xp_amount, "group_duel_correct")
         try:
-            await bot.send_message(uid, f"🎁 جوایز دوئل\nدرست: {score}\nایکس‌پی: +{xp_amount}\nسکه و جام در دوئل گروهی داده نمی‌شود.")
+            await bot.send_message(uid, f"🎁 جوایز دوئل\nدرست {score}\nایکس‌پی +{xp_amount}\nسکه و جام تو دوئل گروهی داده نمیشه")
         except Exception:
             logger.exception("Could not send group duel reward PM")
-    text = f"⚔️ نتیجه‌ی دوئل\n━━━━━━━━━━━━━━\n🏆 {trim_name(winner_name)} برد\n{s1} درست vs {s2} درست\n━━━━━━━━━━━━━━\n🎁 جوایز در پیوی ارسال شد\n\nبرای گزارش مشکل، دکمه گزارش را بزن."
+    text = f"⚔️ نتیجه دوئل\n\n🏆 {trim_name(winner_name)} برد\n{s1} درست vs {s2} درست\n\n🎁 جوایز تو پی‌وی فرستاده شد\n\nبرای گزارش مشکل دکمه گزارش رو بزن"
     completed_group_duels[game.lobby.lobby_id] = game
     await edit_lobby(bot, game.lobby, text, group_finished_keyboard(game.lobby.lobby_id, "gdreport"))
     await db.log_group_game('duel', game.lobby.chat_id, game.lobby.inline_message_id, len(game.lobby.players), len(game.questions))
@@ -1122,7 +1121,7 @@ async def group_duel_leave(call: CallbackQuery, bot: Bot) -> None:
             await call.answer("دوئل پیدا نشد", show_alert=False)
             return
         if call.from_user.id not in lobby.players:
-            await call.answer("شما داخل این دوئل نیستید", show_alert=False)
+            await call.answer("تو داخل این دوئل نیستی", show_alert=False)
             return
         if call.from_user.id == lobby.starter_id:
             await edit_lobby(bot, lobby, "❌ بازی به دلیل خروج سازنده بسته شد", group_replay_keyboard())
@@ -1148,7 +1147,7 @@ async def group_duel_leave(call: CallbackQuery, bot: Bot) -> None:
 @router.callback_query(F.data == "group_duel_close")
 async def group_duel_close(call: CallbackQuery, bot: Bot) -> None:
     # Backward compatibility for old inline messages created before removing this button.
-    await call.answer("این دکمه دیگر فعال نیست؛ برای بستن دوئل سازنده باید خروج از دوئل را بزند", show_alert=False)
+    await call.answer("این دکمه دیگه فعال نیست، برای بستن دوئل سازنده باید خروج از دوئل رو بزنه", show_alert=False)
 
 
 def _report_game_by_prefix(prefix: str, game_id: str):
@@ -1164,12 +1163,12 @@ async def group_report_menu(call: CallbackQuery, bot: Bot) -> None:
         if not game:
             await call.answer("گزارش برای این بازی پیدا نشد", show_alert=True)
             return
-        lines = ["📋 سوالات و جواب‌های این بازی:"]
+        lines = ["📋 سوالات و جواب‌های این بازی"]
         for i, q in enumerate(game.questions, 1):
             opts = [q['option1'], q['option2'], q['option3'], q['option4']]
             correct = opts[int(q['correct_option']) - 1]
             lines.append(f"\n{i}. {q['text']}\n✅ جواب: {correct}")
-        lines.append("\nبرای گزارش مشکل، شماره سوال را از دکمه‌های زیر انتخاب کن.")
+        lines.append("\nبرای گزارش مشکل شماره سوال رو از دکمه‌های زیر انتخاب کن")
         await bot.send_message(
             call.from_user.id,
             "\n".join(lines),
@@ -1182,7 +1181,7 @@ async def group_report_menu(call: CallbackQuery, bot: Bot) -> None:
     except Exception:
         logger.exception("Group report menu failed")
         try:
-            await call.answer("برای دریافت گزارش، اول ربات را در پی‌وی استارت کنید", show_alert=True, url="https://t.me/ChalleshinoBot?start=from_report")
+            await call.answer("برای دریافت گزارش اول ربات رو تو پی‌وی استارت کن", show_alert=True, url="https://t.me/ChalleshinoBot?start=from_report")
         except Exception:
             pass
 
@@ -1198,7 +1197,7 @@ async def group_report_question(call: CallbackQuery, db: Database, bot: Bot, rep
             return
         idx = int(idx_s)
         if idx < 0 or idx >= len(game.questions):
-            await call.answer("شماره سوال نامعتبر است", show_alert=True)
+            await call.answer("شماره سوال نامعتبره", show_alert=True)
             return
         q = game.questions[idx]
         report_id = await db.add_report(q['id'], call.from_user.id, None, f"گزارش از بازی گروهی/دوئل - سوال {idx+1}")
@@ -1216,7 +1215,7 @@ async def group_report_question(call: CallbackQuery, db: Database, bot: Bot, rep
                 reply_markup=report_admin_keyboard(q['id'], report_id),
             )
         if call.message:
-            await call.message.answer("✅ گزارش سوال ثبت شد.")
+            await call.message.answer("✅ گزارش سوال ثبت شد")
         else:
             await call.answer("✅ گزارش ثبت شد", show_alert=True)
     except Exception:

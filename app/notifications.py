@@ -35,13 +35,13 @@ async def levelup_steps(old_level: int, new_level: int) -> list[str]:
             "⬆️ ...",
             "⬆️⬆️ ...",
             "⬆️⬆️⬆️ ...",
-            f"🎉 لول آپ!\n━━━━━━━━━\nلول {old_level} ← لول {new_level}\n━━━━━━━━━",
+            f"🎉 لول آپ!\nلول {old_level} ← لول {new_level}",
         ]
     return [
         "💫",
         "💫✨💫",
         "💫✨🌟✨💫",
-        f"🚀 ارتقا!\n━━━━━━━━━\nلول {old_level} ← لول {new_level}\n━━━━━━━━━",
+        f"🚀 ارتقا!\nلول {old_level} ← لول {new_level}",
     ]
 
 
@@ -51,7 +51,7 @@ async def rankup_steps(old_rank: str, new_rank: str, old_level: int, new_level: 
         "🏆 ...",
         "🏆🏆 ...",
         "🏆🏆🏆 ...",
-        f"👑 ترفیع!\n━━━━━━━━━━━━\n{old_rank} ← {new_rank}{level_line}\n━━━━━━━━━━━━",
+        f"👑 ترفیع!\n{old_rank} ← {new_rank}{level_line}",
     ]
 
 
@@ -68,7 +68,7 @@ async def title_steps(db: Database, old_title: str, new_title: str, old_rank: st
         "⚡️💫⚡️💫⚡️💫⚡️\n💫🌟💥💥💥🌟💫\n⚡️💫⚡️💫⚡️💫⚡️",
         "🎊🎉🎊🎉🎊🎉🎊\n🎉✨💥💥💥✨🎉\n🎊🎉🎊🎉🎊🎉🎊",
         await db.get_setting("title_anim_step9", "🎊🎉🎊🎉🎊🎉🎊\n🎉🏆 تبریک! 🏆🎉\n🎊🎉🎊🎉🎊🎉🎊"),
-        (await db.get_setting("title_anim_step10", "━━━━━━━━━━━\n🏅 لقب جدید 🏅\n━━━━━━━━━━━\n⚔️ {new_title} ⚔️\n━━━━━━━━━━━\n{level_line}\n{rank_line}"))
+        (await db.get_setting("title_anim_step10", "🏅 لقب جدید 🏅\n⚔️ {new_title} ⚔️\n{level_line}\n{rank_line}"))
         .format(new_title=new_title, old_title=old_title, level_line=level_line, rank_line=rank_line),
     ]
 
@@ -77,7 +77,7 @@ async def demotion_steps(old_rank: str, new_rank: str) -> list[str]:
     return [
         "😔 این بار نشد...",
         "😔 این بار نشد...",
-        f"━━━━━━━━━━━\n📉 سقوط رنک\n━━━━━━━━━━━\n{old_rank} ← {new_rank}\n━━━━━━━━━━━\nولی هنوز وقت هست 💪",
+        f"📉 سقوط رنک\n{old_rank} ← {new_rank}\nولی هنوز وقت هست 💪",
     ]
 
 
@@ -109,6 +109,6 @@ async def send_streak_notification(bot: Bot, user_id: int, reward: dict | None) 
         day = int(reward.get("day", 0))
         coins = int(reward.get("coins", 0))
         balance = int(reward.get("balance", 0))
-        await bot.send_message(user_id, f"🎁 کمک روزانه روز {day}: <b>{coins} سکه</b> به حسابت اضافه شد.\nموجودی فعلی: <b>{balance} سکه</b>")
+        await bot.send_message(user_id, f"🎁 کمک روزانه روز {day}\n<b>{coins} سکه</b> به حسابت اضافه شد\nموجودی فعلی <b>{balance} سکه</b>")
     except Exception:
         logger.exception("Daily aid notification failed")

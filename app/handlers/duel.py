@@ -59,11 +59,12 @@ def runtime(duel_id: int) -> DuelRuntime:
 async def duel_entry(message: Message, db: Database) -> None:
     u = await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     if u['is_blocked']:
-        await message.answer("حساب شما مسدود است.")
+        await message.answer("حسابت مسدوده")
         return
     random_cost = await db.get_int('random_duel_cost', 5)
     bot_cost = await db.get_int('bot_duel_cost', 3)
-    await message.answer("⚔️ دوئل\nیکی را انتخاب کن:", reply_markup=duel_menu(random_cost, bot_cost))
+    await message.answer("⚔️ دوئل", reply_markup=ReplyKeyboardRemove())
+    await message.answer("یکی رو انتخاب کن", reply_markup=duel_menu(random_cost, bot_cost))
 
 
 @router.callback_query(F.data == "duel:random")
@@ -71,12 +72,12 @@ async def random_duel(call: CallbackQuery, db: Database, bot: Bot) -> None:
     try:
         active = await db.active_duel_for_user(call.from_user.id)
         if active:
-            await call.answer("شما یک دوئل فعال دارید.", show_alert=True)
+            await call.answer("یه دوئل فعال داری", show_alert=True)
             return
         cost = await db.get_int('random_duel_cost', 5)
         user = await db.get_user(call.from_user.id)
         if not user or user['coins'] < cost:
-            await call.answer(f"برای ورود به صف دوئل شانسی به {cost} سکه نیاز داری.", show_alert=True)
+            await call.answer(f"برای ورود به صف دوئل شانسی {cost} سکه لازم داری", show_alert=True)
             return
         waiting = await db.find_waiting_duel(call.from_user.id)
         await db.change_coins(call.from_user.id, -cost, 'random_duel_entry')
@@ -88,15 +89,15 @@ async def random_duel(call: CallbackQuery, db: Database, bot: Bot) -> None:
             p1 = await db.get_user(waiting['player1_id'])
             p1_name = (p1['first_name'] or p1['username'] or str(waiting['player1_id'])) if p1 else str(waiting['player1_id'])
             p2_name = call.from_user.first_name or str(call.from_user.id)
-            await call.message.answer(f"حریف پیدا شد: {p1_name}\nانتخاب ژانر شروع شد.")
-            await bot.send_message(waiting['player1_id'], f"حریف پیدا شد: {p2_name}\nانتخاب ژانر شروع شد.")
+            await call.message.answer(f"حریف پیدا شد {p1_name}\nانتخاب ژانر شروع شد")
+            await bot.send_message(waiting['player1_id'], f"حریف پیدا شد {p2_name}\nانتخاب ژانر شروع شد")
             await offer_genres(waiting['id'], db, bot)
         else:
             duel_id = await db.create_waiting_duel(call.from_user.id)
             timeout = await db.get_int('matchmaking_timeout_seconds', 120)
             queue_timeout_tasks[duel_id] = asyncio.create_task(random_queue_timeout(duel_id, call.from_user.id, cost, timeout, db, bot))
-            await call.message.answer("منوی پایین بسته شد.", reply_markup=ReplyKeyboardRemove())
-            await call.message.answer(f"در صف انتظار قرار گرفتی. حداکثر {timeout} ثانیه منتظر حریف می‌مانی. اگر حریفی پیدا نشود، صف لغو و {cost} سکه برگردانده می‌شود.", reply_markup=waiting_queue_keyboard(duel_id))
+            await call.message.answer("در صف انتظار قرار گرفتی", reply_markup=ReplyKeyboardRemove())
+            await call.message.answer(f"حداکثر {timeout} ثانیه منتظر حریف می‌مونی\nاگه حریفی پیدا نشه صف لغو میشه و {cost} سکه برمی‌گرده", reply_markup=waiting_queue_keyboard(duel_id))
         await call.answer()
     except Exception:
         logger.exception("Random duel failed")
@@ -110,7 +111,7 @@ async def random_queue_timeout(duel_id: int, user_id: int, cost: int, seconds: i
         if duel and duel['status'] == 'waiting' and duel['player1_id'] == user_id:
             await db.execute_write("UPDATE duels SET status='cancelled', finished_at=? WHERE id=?", (now_iso(), duel_id))
             await db.change_coins(user_id, cost, 'random_duel_timeout_refund')
-            await bot.send_message(user_id, f"⏱ حریفی پیدا نشد؛ صف دوئل شانسی لغو شد و {cost} سکه به حساب شما برگشت.", reply_markup=main_menu(await db.is_admin(user_id)))
+            await bot.send_message(user_id, f"⏱ حریفی پیدا نشد، صف دوئل شانسی لغو شد و {cost} سکه به حسابت برگشت", reply_markup=main_menu(await db.is_admin(user_id)))
     except asyncio.CancelledError:
         return
     except Exception:
@@ -123,7 +124,7 @@ async def cancel_random_queue(call: CallbackQuery, db: Database) -> None:
         duel_id = int(call.data.split(":")[2])
         duel = await db.get_duel(duel_id)
         if not duel or duel['status'] != 'waiting' or duel['player1_id'] != call.from_user.id:
-            await call.answer("صف فعالی برای لغو پیدا نشد.", show_alert=True)
+            await call.answer("صف فعالی برای لغو پیدا نشد", show_alert=True)
             return
         task = queue_timeout_tasks.pop(duel_id, None)
         if task and not task.done():
@@ -131,7 +132,7 @@ async def cancel_random_queue(call: CallbackQuery, db: Database) -> None:
         cost = await db.get_int('random_duel_cost', 5)
         await db.execute_write("UPDATE duels SET status='cancelled', finished_at=? WHERE id=?", (now_iso(), duel_id))
         await db.change_coins(call.from_user.id, cost, 'random_duel_queue_cancel_refund', duel_id)
-        await call.message.answer(f"از صف خارج شدی و {cost} سکه به حسابت برگشت.", reply_markup=main_menu(await db.is_admin(call.from_user.id)))
+        await call.message.answer(f"از صف خارج شدی و {cost} سکه به حسابت برگشت", reply_markup=main_menu(await db.is_admin(call.from_user.id)))
         await call.answer()
     except Exception:
         logger.exception("Cancel random queue failed")
@@ -154,18 +155,18 @@ async def bot_duel(call: CallbackQuery, db: Database, bot: Bot) -> None:
     try:
         active = await db.active_duel_for_user(call.from_user.id)
         if active:
-            await call.answer("شما یک دوئل فعال دارید.", show_alert=True)
+            await call.answer("یه دوئل فعال داری", show_alert=True)
             return
         cost = await db.get_int('bot_duel_cost', 3)
         user = await db.get_user(call.from_user.id)
         if not user or user['coins'] < cost:
-            await call.answer(f"برای دوئل با ربات به {cost} سکه نیاز داری.", show_alert=True)
+            await call.answer(f"برای دوئل با ربات {cost} سکه لازم داری", show_alert=True)
             return
         await ensure_bot_opponent_row(db)
         await db.change_coins(call.from_user.id, -cost, 'bot_duel_entry')
         level = random.randint(1, 5)
         duel_id = await db.create_bot_duel(call.from_user.id, BOT_OPPONENT_ID, level)
-        await call.message.answer(f"حریف پیدا شد: {BOT_OPPONENT_NAME}\nانتخاب ژانر شروع شد.")
+        await call.message.answer(f"حریف پیدا شد {BOT_OPPONENT_NAME}\nانتخاب ژانر شروع شد")
         await offer_genres(duel_id, db, bot)
         await call.answer()
     except Exception:
@@ -200,10 +201,10 @@ async def offer_genres(duel_id: int, db: Database, bot: Bot) -> None:
     choose_n = await db.get_int('genres_to_choose', 2)
     if len(candidates) < offer_n:
         cost = await db.get_int(duel_entry_cost_key(duel), 5)
-        await bot.send_message(duel['player1_id'], "ژانر/سوال فعال کافی برای شروع دوئل وجود ندارد؛ هزینه پرداخت‌شده برگردانده شد.")
+        await bot.send_message(duel['player1_id'], "ژانر یا سوال فعال کافی برای شروع دوئل نیست، هزینه پرداختیت برگشت")
         await db.change_coins(duel['player1_id'], cost, 'duel_cancel_refund', duel_id)
         if not is_bot_duel:
-            await bot.send_message(duel['player2_id'], "ژانر/سوال فعال کافی برای شروع دوئل وجود ندارد؛ هزینه پرداخت‌شده برگردانده شد.")
+            await bot.send_message(duel['player2_id'], "ژانر یا سوال فعال کافی برای شروع دوئل نیست، هزینه پرداختیت برگشت")
             await db.change_coins(duel['player2_id'], cost, 'duel_cancel_refund', duel_id)
         await db.execute_write("UPDATE duels SET status='cancelled' WHERE id=?", (duel_id,))
         return
@@ -233,7 +234,8 @@ async def offer_genres(duel_id: int, db: Database, bot: Bot) -> None:
             continue
         user_genre_temp[(duel_id, uid)] = set()
         user_offer_temp[(duel_id, uid)] = offers[uid]
-        await bot.send_message(uid, f"از ژانرهای زیر دقیقاً {choose_n} مورد را انتخاب کن:", reply_markup=genres_keyboard(duel_id, offers[uid], set(), choose_n))
+        await bot.send_message(uid, "منوی پایین بسته شد", reply_markup=ReplyKeyboardRemove())
+        await bot.send_message(uid, f"از ژانرهای زیر دقیقاً {choose_n} مورد رو انتخاب کن", reply_markup=genres_keyboard(duel_id, offers[uid], set(), choose_n))
         old_task = genre_timeout_tasks.pop((duel_id, uid), None)
         if old_task and not old_task.done():
             old_task.cancel()
@@ -255,9 +257,9 @@ async def genre_selection_timeout(duel_id: int, user_id: int, seconds: int, db: 
         is_bot_duel = duel['opponent_type'] == 'bot'
         if not is_bot_duel and other_id:
             await db.change_coins(other_id, cost, 'genre_timeout_other_refund', duel_id)
-        await bot.send_message(user_id, "⏱ زمان انتخاب ژانر تمام شد؛ چون انتخاب نکردی دوئل بسته شد و هزینه ورودت برنگشت.", reply_markup=main_menu(await db.is_admin(user_id)))
+        await bot.send_message(user_id, "⏱ زمان انتخاب ژانر تموم شد، چون انتخاب نکردی دوئل بسته شد و هزینه ورودت برنگشت", reply_markup=main_menu(await db.is_admin(user_id)))
         if not is_bot_duel and other_id:
-            await bot.send_message(other_id, "⏱ حریف ژانر را انتخاب نکرد؛ دوئل بسته شد و هزینه ورودت برگشت.", reply_markup=main_menu(await db.is_admin(other_id)))
+            await bot.send_message(other_id, "⏱ حریف ژانر رو انتخاب نکرد، دوئل بسته شد و هزینه ورودت برگشت", reply_markup=main_menu(await db.is_admin(other_id)))
         for key, task in list(genre_timeout_tasks.items()):
             if key[0] == duel_id and not task.done():
                 task.cancel()
@@ -276,7 +278,7 @@ async def genre_toggle(call: CallbackQuery, db: Database) -> None:
         duel_id = int(duel_id_s)
         duel = await db.get_duel(duel_id)
         if not duel or call.from_user.id not in [duel['player1_id'], duel['player2_id']]:
-            await call.answer("این دوئل متعلق به شما نیست.", show_alert=True)
+            await call.answer("این دوئل مال تو نیست", show_alert=True)
             return
         choose_n = await db.get_int('genres_to_choose', 2)
         key = (duel_id, call.from_user.id)
@@ -286,7 +288,7 @@ async def genre_toggle(call: CallbackQuery, db: Database) -> None:
         elif len(selected) < choose_n:
             selected.add(genre)
         else:
-            await call.answer(f"حداکثر {choose_n} ژانر انتخاب می‌شود.", show_alert=True)
+            await call.answer(f"حداکثر {choose_n} ژانر انتخاب میشه", show_alert=True)
             return
         offered = user_offer_temp.get((duel_id, call.from_user.id), [])
         if not offered:
@@ -305,13 +307,13 @@ async def genre_done(call: CallbackQuery, db: Database, bot: Bot) -> None:
         choose_n = await db.get_int('genres_to_choose', 2)
         selected = user_genre_temp.get((duel_id, call.from_user.id), set())
         if len(selected) != choose_n:
-            await call.answer(f"باید دقیقاً {choose_n} ژانر انتخاب کنی.", show_alert=True)
+            await call.answer(f"باید دقیقاً {choose_n} ژانر انتخاب کنی", show_alert=True)
             return
         await db.save_genre_choices(duel_id, call.from_user.id, list(selected))
         my_gtask = genre_timeout_tasks.pop((duel_id, call.from_user.id), None)
         if my_gtask and not my_gtask.done():
             my_gtask.cancel()
-        await call.message.edit_text("انتخاب شما ثبت شد. منتظر حریف بمانید...")
+        await call.message.edit_text("انتخابت ثبت شد، منتظر حریف بمون")
         duel = await db.get_duel(duel_id)
         choices = await db.duel_choices(duel_id)
         if duel and duel['player1_id'] in choices and duel['player2_id'] in choices:
@@ -326,16 +328,16 @@ async def genre_done(call: CallbackQuery, db: Database, bot: Bot) -> None:
             qs = await db.start_duel_questions(duel_id, selected_genres, count)
             if not qs:
                 cost = await db.get_int(duel_entry_cost_key(duel), 5)
-                await bot.send_message(duel['player1_id'], "در ژانرهای انتخاب‌شده سوال فعالی پیدا نشد؛ هزینه پرداخت‌شده برگردانده شد.")
+                await bot.send_message(duel['player1_id'], "تو ژانرهای انتخاب‌شده سوال فعالی پیدا نشد، هزینه پرداختیت برگشت")
                 await db.change_coins(duel['player1_id'], cost, 'duel_cancel_refund', duel_id)
                 if not is_bot_duel:
-                    await bot.send_message(duel['player2_id'], "در ژانرهای انتخاب‌شده سوال فعالی پیدا نشد؛ هزینه پرداخت‌شده برگردانده شد.")
+                    await bot.send_message(duel['player2_id'], "تو ژانرهای انتخاب‌شده سوال فعالی پیدا نشد، هزینه پرداختیت برگشت")
                     await db.change_coins(duel['player2_id'], cost, 'duel_cancel_refund', duel_id)
                 await db.execute_write("UPDATE duels SET status='cancelled' WHERE id=?", (duel_id,))
             else:
-                await bot.send_message(duel['player1_id'], f"دوئل شروع شد! ژانرهای بازی: {', '.join(selected_genres)}")
+                await bot.send_message(duel['player1_id'], f"دوئل شروع شد! ژانرهای بازی {', '.join(selected_genres)}")
                 if not is_bot_duel:
-                    await bot.send_message(duel['player2_id'], f"دوئل شروع شد! ژانرهای بازی: {', '.join(selected_genres)}")
+                    await bot.send_message(duel['player2_id'], f"دوئل شروع شد! ژانرهای بازی {', '.join(selected_genres)}")
                 await send_current_question(duel_id, db, bot)
         await call.answer()
     except Exception:
@@ -427,9 +429,9 @@ async def forfeit_inactive_duel(duel_id: int, inactive_users: list[int], db: Dat
         if winner and is_real_user(winner):
             await db.change_coins(winner, penalty, 'inactive_forfeit_reward', duel_id)
         for uid in inactive:
-            await safe_send(bot, uid, f"⚠️ به دلیل پاسخ ندادن به 3 سوال پشت‌سرهم، دوئل بسته شد و {penalty} سکه جریمه شدی.", reply_markup=main_menu(await db.is_admin(uid)))
+            await safe_send(bot, uid, f"⚠️ به دلیل پاسخ ندادن به ۳ سوال پشت‌سرهم دوئل بسته شد و {penalty} سکه جریمه شدی", reply_markup=main_menu(await db.is_admin(uid)))
         for uid in active:
-            await safe_send(bot, uid, f"✅ حریف 3 سوال پشت‌سرهم جواب نداد؛ دوئل بسته شد و {penalty} سکه جریمه حریف به حسابت اضافه شد.", reply_markup=main_menu(await db.is_admin(uid)))
+            await safe_send(bot, uid, f"✅ حریف ۳ سوال پشت‌سرهم جواب نداد، دوئل بسته شد و {penalty} سکه جریمه حریف به حسابت اضافه شد", reply_markup=main_menu(await db.is_admin(uid)))
         channel = await db.get_setting('reports_channel_id', '')
         if channel:
             try:
@@ -533,7 +535,7 @@ async def answer_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
         score = 1.0 if opt == q['correct_option'] else 0.0
         inserted = await db.record_answer(duel_id, qid, call.from_user.id, opt, q['correct_option'], ms, answer_score=score, attempt=attempt)
         if not inserted:
-            await call.answer("قبلاً پاسخ داده‌ای.", show_alert=True)
+            await call.answer("قبلاً جواب دادی", show_alert=True)
             return
         unanswered_streaks[(duel_id, call.from_user.id)] = 0
         second_chance_pending.discard(pending_key)
@@ -589,30 +591,30 @@ async def finish_and_notify(duel_id: int, db: Database, bot: Bot) -> None:
         if not is_real_user(uid):
             continue
         if winner is None:
-            line = "🤝 نتیجه: مساوی"
+            line = "🤝 نتیجه مساوی"
         elif winner == uid:
-            line = "🎉 شما برنده شدید"
+            line = "🎉 بردی"
         else:
-            line = "😔 شما بازنده شدید"
+            line = "😔 باختی"
         rewards = result.get('transitions', {}).get(uid, {}).get('rewards', {})
         reward_text = (
-            f"\n\n💰 سکه: {rewards.get('coins', 0):+}\n"
-            f"⭐ ایکس‌پی: {rewards.get('xp', 0):+}\n"
-            f"🏆 جام: {rewards.get('cups', 0):+}"
+            f"\n\n💰 سکه {rewards.get('coins', 0):+}\n"
+            f"⭐ ایکس‌پی {rewards.get('xp', 0):+}\n"
+            f"🏆 جام {rewards.get('cups', 0):+}"
         )
         summary = await db.duel_user_summary(duel_id, uid)
-        wrong_lines = "\n".join(f"• {x['genre']} — جواب درست: {x['correct']}" for x in summary['wrong_items']) or "—"
+        wrong_lines = "\n".join(f"• {x['genre']} — جواب درست {x['correct']}" for x in summary['wrong_items']) or "—"
         opponent_id = duel['player1_id'] if uid == duel['player2_id'] else duel['player2_id']
         final_text = (
-            f"🏁 دوئل تمام شد\n{line}{reward_text}\n\n"
-            f"امتیاز شما: {stats[uid]['correct']} پاسخ صحیح\n"
-            f"امتیاز حریف: {stats[opponent_id]['correct']} پاسخ صحیح\n\n"
-            f"📊 خلاصه‌ی دوئل تو:\n\n"
-            f"✅ درست: {summary['correct']} سوال\n"
-            f"❌ غلط: {summary['wrong']} سوال\n"
-            f"⏱ میانگین زمان پاسخ: {summary['avg_seconds']:.1f} ثانیه\n"
-            f"🎯 دقت: {summary['accuracy']}%\n\n"
-            f"📌 سوالاتی که غلط زدی:\n{wrong_lines}"
+            f"🏁 دوئل تموم شد\n{line}{reward_text}\n\n"
+            f"امتیاز تو {stats[uid]['correct']} پاسخ صحیح\n"
+            f"امتیاز حریف {stats[opponent_id]['correct']} پاسخ صحیح\n\n"
+            f"📊 خلاصه دوئلت\n\n"
+            f"✅ درست {summary['correct']} سوال\n"
+            f"❌ غلط {summary['wrong']} سوال\n"
+            f"⏱ میانگین زمان پاسخ {summary['avg_seconds']:.1f} ثانیه\n"
+            f"🎯 دقت {summary['accuracy']}%\n\n"
+            f"📌 سوالاتی که غلط زدی\n{wrong_lines}"
         )
         is_bot_opponent = duel['opponent_type'] == 'bot'
         markup = duel_finished_keyboard(duel_id, opponent_id, is_bot_opponent)
@@ -661,31 +663,31 @@ async def powerup_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
         _, ptype, duel_s, qid_s = call.data.split(":")
         duel_id, qid = int(duel_s), int(qid_s)
         if ptype not in {'remove2', 'auto'}:
-            await call.message.answer("این پاورآپ دیگر فعال نیست.")
+            await call.message.answer("این پاورآپ دیگه فعال نیست")
             return
         costs = await db.powerup_costs_for_user(duel_id, call.from_user.id)
         cost = costs['remove2'] if ptype == 'remove2' else costs['auto']
         if cost < 0:
-            await call.message.answer("❌ سقف استفاده از این پاورآپ در این دوئل پر شده است.")
+            await call.message.answer("❌ سقف استفاده از این پاورآپ تو این دوئل پر شده")
             return
         user = await db.get_user(call.from_user.id)
         q = await db.fetchone("SELECT * FROM questions WHERE id=?", (qid,))
         duel = await db.get_duel(duel_id)
         if not user or not q or not duel:
-            await call.message.answer("پاورآپ نامعتبر است.")
+            await call.message.answer("پاورآپ نامعتبره")
             return
         if await db.has_answered(duel_id, qid, call.from_user.id):
-            await call.message.answer("بعد از پاسخ دادن نمی‌توانی پاورآپ فعال کنی.")
+            await call.message.answer("بعد از پاسخ دادن نمی‌تونی پاورآپ فعال کنی")
             return
         if user['coins'] < cost:
-            await call.message.answer(f"سکه کافی نداری. هزینه فعلی: {cost} سکه")
+            await call.message.answer(f"سکه کافی نداری، هزینه فعلی {cost} سکه")
             return
         if await db.has_powerup(duel_id, qid, call.from_user.id, ptype):
-            await call.message.answer("این پاورآپ را برای این سوال قبلاً استفاده کرده‌ای.")
+            await call.message.answer("این پاورآپ رو برای این سوال قبلاً استفاده کردی")
             return
         ok = await db.mark_powerup(duel_id, qid, call.from_user.id, ptype)
         if not ok:
-            await call.message.answer("امکان استفاده از این پاورآپ نیست.")
+            await call.message.answer("امکان استفاده از این پاورآپ نیست")
             return
         await db.change_coins(call.from_user.id, -cost, f"powerup_{ptype}", duel_id)
         if ptype == 'remove2':
@@ -695,18 +697,18 @@ async def powerup_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
             new_costs = await db.powerup_costs_for_user(duel_id, call.from_user.id)
             markup = question_keyboard(duel_id, qid, options_from_question(q), hidden, cost_remove2=-1, cost_auto=new_costs['auto'])
             asyncio.create_task(safe_edit_reply_markup(call.message, markup))
-            await call.message.answer(f"✅ خرید موفق\n🪙 {cost} سکه کسر شد.\n🔪 دو گزینه حذف شد.")
+            await call.message.answer(f"✅ خرید موفق\n🪙 {cost} سکه کسر شد\n🔪 دو گزینه حذف شد")
             return
         rt = runtime(duel_id)
         ms = int((time.monotonic() - rt.question_started_at) * 1000)
         correct_option = int(q['correct_option'])
         inserted = await db.record_answer(duel_id, qid, call.from_user.id, correct_option, correct_option, ms, answer_score=1.0, attempt=1)
         if not inserted:
-            await call.message.answer("قبلاً پاسخ داده‌ای.")
+            await call.message.answer("قبلاً جواب دادی")
             return
         unanswered_streaks[(duel_id, call.from_user.id)] = 0
         base_result_text = f"سوال {duel['current_index'] + 1}\nID: <code>{qid}</code>\n\n{q['text']}"
-        result_text = f"{base_result_text}\n\n✅ پاورآپ جواب خودکار فعال شد.\nجواب درست: {options_from_question(q)[correct_option - 1]} ✅"
+        result_text = f"{base_result_text}\n\n✅ پاورآپ جواب خودکار فعال شد\nجواب درست {options_from_question(q)[correct_option - 1]} ✅"
         try:
             await call.message.edit_text(result_text)
         except Exception:
@@ -718,7 +720,7 @@ async def powerup_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
     except Exception:
         logger.exception("Powerup failed")
         try:
-            await call.message.answer("خطا در فعال‌سازی پاورآپ.")
+            await call.message.answer("خطا در فعال‌سازی پاورآپ")
         except Exception:
             logger.exception("Powerup error notify failed")
 
@@ -729,7 +731,7 @@ async def report_question(call: CallbackQuery, state: FSMContext) -> None:
         _, duel_s, qid_s = call.data.split(":")
         await state.set_state(ReportQuestion.reason)
         await state.update_data(report_duel_id=int(duel_s), report_qid=int(qid_s))
-        await call.message.answer("دلیل گزارش را بنویس یا /skip بزن تا بدون دلیل ثبت شود.")
+        await call.message.answer("دلیل گزارش رو بنویس یا /skip بزن تا بدون دلیل ثبت بشه")
         await call.answer()
     except Exception:
         logger.exception("Report start failed")
@@ -745,17 +747,17 @@ async def report_reason(message: Message, state: FSMContext, db: Database, bot: 
         if reports_channel_id:
             await bot.send_message(reports_channel_id, f"🚩 گزارش سوال #{report_id}\nQuestion ID: <code>{data['report_qid']}</code>\nDuel ID: {data['report_duel_id']}\nReporter: <code>{message.from_user.id}</code>\nReason: {reason or 'بدون دلیل'}")
         await state.clear()
-        await message.answer("گزارش ثبت شد. ممنون.")
+        await message.answer("گزارش ثبت شد، ممنون")
     except Exception:
         logger.exception("Report save failed")
-        await message.answer("خطا در ثبت گزارش.")
+        await message.answer("خطا در ثبت گزارش")
 
 
 @router.callback_query(F.data.startswith("issue_report:"))
 async def issue_report_start(call: CallbackQuery) -> None:
     try:
         _, duel_s, qid_s = call.data.split(":")
-        await call.message.answer("دلیل گزارش را انتخاب کن:", reply_markup=issue_report_reasons_keyboard(int(duel_s), int(qid_s)))
+        await call.message.answer("دلیل گزارش رو انتخاب کن", reply_markup=issue_report_reasons_keyboard(int(duel_s), int(qid_s)))
         await call.answer()
     except Exception:
         logger.exception("Issue report start failed")
@@ -769,7 +771,7 @@ async def issue_report_reason(call: CallbackQuery, db: Database, bot: Bot, repor
         qid = int(qid_s)
         duel_id = int(duel_s)
         if await db.report_exists(qid, call.from_user.id):
-            await call.answer("شما قبلاً این سوال را گزارش کرده‌اید.", show_alert=True)
+            await call.answer("قبلاً این سوال رو گزارش کردی", show_alert=True)
             return
         reason_map = {
             "wrong_answer": "جواب اشتباه است ❌",
@@ -795,8 +797,8 @@ async def issue_report_reason(call: CallbackQuery, db: Database, bot: Bot, repor
         if count >= await db.get_int("question_auto_disable_reports", 3):
             await db.deactivate_question(qid)
             if reports_channel_id:
-                await bot.send_message(reports_channel_id, f"⏸ سوال #{qid} به دلیل {count} گزارش، خودکار غیرفعال شد.")
-        await call.message.answer("گزارش ثبت شد. ممنون بابت کمک‌ات.")
+                await bot.send_message(reports_channel_id, f"⏸ سوال #{qid} به دلیل {count} گزارش خودکار غیرفعال شد")
+        await call.message.answer("گزارش ثبت شد، ممنون بابت کمکت")
         await call.answer()
     except Exception:
         logger.exception("Issue report reason failed")
@@ -814,9 +816,9 @@ async def duel_report_answers_callback(call: CallbackQuery, db: Database) -> Non
                                   LEFT JOIN duel_answers a ON a.duel_id=dq.duel_id AND a.question_id=q.id AND a.user_id=?
                                   WHERE dq.duel_id=? ORDER BY dq.seq""", (call.from_user.id, duel_id))
         if not rows:
-            await call.message.answer("سوالات این دوئل پیدا نشد.")
+            await call.message.answer("سوالات این دوئل پیدا نشد")
             return
-        lines = ["📋 سوالات و جواب‌های این دوئل:"]
+        lines = ["📋 سوالات و جواب‌های این دوئل"]
         for i, q in enumerate(rows, 1):
             opts = options_from_question(q)
             correct_idx = int(q['correct_option'])
@@ -825,14 +827,14 @@ async def duel_report_answers_callback(call: CallbackQuery, db: Database) -> Non
             mark = "✅" if q['is_correct'] else "❌"
             lines.append(
                 f"\n{i}. {q['text']}\n"
-                f"✅ جواب صحیح: {opts[correct_idx-1]}\n"
-                f"{mark} پاسخ شما: {selected_text}"
+                f"✅ جواب صحیح {opts[correct_idx-1]}\n"
+                f"{mark} پاسخ تو {selected_text}"
             )
-        lines.append("\nبرای گزارش مشکل، شماره سوال را انتخاب کن.")
+        lines.append("\nبرای گزارش مشکل شماره سوال رو انتخاب کن")
         await call.message.answer("\n".join(lines), reply_markup=group_report_questions_keyboard(str(duel_id), len(rows), "duelr"))
     except Exception:
         logger.exception("Duel report answers failed")
-        await call.message.answer("خطا در نمایش گزارش و جواب‌ها.")
+        await call.message.answer("خطا در نمایش گزارش و جواب‌ها")
 
 
 @router.callback_query(F.data.startswith("opponent_profile:"))
@@ -843,7 +845,7 @@ async def opponent_profile_callback(call: CallbackQuery, db: Database) -> None:
         await call.message.answer(await build_profile_text(db, uid, show_username=False, show_xp=False, show_coins=False))
     except Exception:
         logger.exception("Opponent profile failed")
-        await call.message.answer("خطا در نمایش پروفایل حریف.")
+        await call.message.answer("خطا در نمایش پروفایل حریف")
 
 
 async def rematch_timeout(requester_id: int, opponent_id: int, bot: Bot) -> None:
@@ -852,8 +854,8 @@ async def rematch_timeout(requester_id: int, opponent_id: int, bot: Bot) -> None
         key = (requester_id, opponent_id)
         task = rematch_timeout_tasks.pop(key, None)
         if task:
-            await bot.send_message(requester_id, "⏱ درخواست بازی مجدد منقضی شد.")
-            await bot.send_message(opponent_id, "⏱ زمان پاسخ به درخواست بازی مجدد تمام شد.")
+            await bot.send_message(requester_id, "⏱ درخواست بازی مجدد منقضی شد")
+            await bot.send_message(opponent_id, "⏱ زمان پاسخ به درخواست بازی مجدد تموم شد")
     except asyncio.CancelledError:
         return
     except Exception:
@@ -869,7 +871,7 @@ async def rematch_request_callback(call: CallbackQuery, db: Database, bot: Bot) 
             await call.answer("دیگه نمی‌تونی برای این حریف درخواست مجدد بفرستی", show_alert=True)
             return
         rematch_sent_pairs.add(key)
-        await bot.send_message(opponent_id, "حریف شما درخواست بازی مجدد ارسال کرده است.", reply_markup=rematch_keyboard(call.from_user.id))
+        await bot.send_message(opponent_id, "حریفت درخواست بازی مجدد فرستاده", reply_markup=rematch_keyboard(call.from_user.id))
         old = rematch_timeout_tasks.pop(key, None)
         if old and not old.done():
             old.cancel()
@@ -877,7 +879,7 @@ async def rematch_request_callback(call: CallbackQuery, db: Database, bot: Bot) 
         await call.answer("درخواست ارسال شد", show_alert=False)
     except Exception:
         logger.exception("Rematch request failed")
-        await call.message.answer("امکان ارسال درخواست بازی مجدد نبود.")
+        await call.message.answer("امکان ارسال درخواست بازی مجدد نبود")
 
 
 @router.callback_query(F.data.startswith("rematch_decline:"))
@@ -890,8 +892,8 @@ async def rematch_decline_callback(call: CallbackQuery, bot: Bot) -> None:
                 rematch_timeout_tasks.pop(key, None)
                 if not task.done():
                     task.cancel()
-        await bot.send_message(requester_id, "❌ حریف درخواست بازی مجدد را رد کرد.")
-        await call.message.edit_text("درخواست بازی مجدد رد شد.")
+        await bot.send_message(requester_id, "❌ حریف درخواست بازی مجدد رو رد کرد")
+        await call.message.edit_text("درخواست بازی مجدد رد شد")
     except Exception:
         logger.debug("Could not edit rematch decline", exc_info=True)
 
@@ -909,12 +911,12 @@ async def rematch_accept_callback(call: CallbackQuery, db: Database, bot: Bot) -
         token = invite_token()
         duel_id = await db.create_invite_duel(requester_id, token)
         await db.join_duel(duel_id, call.from_user.id)
-        await bot.send_message(requester_id, "✅ حریف درخواست بازی مجدد را قبول کرد. انتخاب ژانر شروع شد.")
-        await call.message.edit_text("درخواست پذیرفته شد. انتخاب ژانر شروع شد.")
+        await bot.send_message(requester_id, "✅ حریف درخواست بازی مجدد رو قبول کرد، انتخاب ژانر شروع شد")
+        await call.message.edit_text("درخواست پذیرفته شد، انتخاب ژانر شروع شد")
         await offer_genres(duel_id, db, bot)
     except Exception:
         logger.exception("Rematch accept failed")
-        await call.message.answer("خطا در قبول بازی مجدد.")
+        await call.message.answer("خطا در قبول بازی مجدد")
 
 
 @router.callback_query(F.data.startswith("duelr:q:"))
@@ -926,19 +928,19 @@ async def duel_report_select_question(call: CallbackQuery, db: Database) -> None
         idx = int(idx_s)
         rows = await db.fetchall("SELECT question_id FROM duel_questions WHERE duel_id=? ORDER BY seq", (duel_id,))
         if idx < 0 or idx >= len(rows):
-            await call.answer("شماره سوال نامعتبر است", show_alert=True)
+            await call.answer("شماره سوال نامعتبره", show_alert=True)
             return
         qid = int(rows[idx]['question_id'])
-        await call.message.answer("دلیل گزارش را انتخاب کن:", reply_markup=issue_report_reasons_keyboard(duel_id, qid))
+        await call.message.answer("دلیل گزارش رو انتخاب کن", reply_markup=issue_report_reasons_keyboard(duel_id, qid))
     except Exception:
         logger.exception("Duel report select question failed")
-        await call.message.answer("خطا در انتخاب سوال برای گزارش.")
+        await call.message.answer("خطا در انتخاب سوال برای گزارش")
 
 
 @router.callback_query(F.data.startswith("duelr:cancel:"))
 async def duel_report_cancel(call: CallbackQuery) -> None:
     await call.answer()
     try:
-        await call.message.edit_text("گزارش شما لغو شد")
+        await call.message.edit_text("گزارش لغو شد")
     except Exception:
         logger.exception("Duel report cancel failed")

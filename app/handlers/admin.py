@@ -654,7 +654,7 @@ async def admin_callback(call: CallbackQuery, db: Database, state: FSMContext, b
                 for item in cancelled:
                     for uid, amount in item['refunds'].items():
                         try:
-                            await bot.send_message(uid, f"🛠 ربات وارد حالت تعمیر شد. دوئل/صف فعال شما بسته شد و {amount} سکه به حسابتان برگشت.", reply_markup=main_menu(await db.is_admin(uid)))
+                            await bot.send_message(uid, f"🛠 ربات وارد حالت تعمیر شد، دوئل/صف فعالت بسته شد و {amount} سکه به حسابت برگشت", reply_markup=main_menu(await db.is_admin(uid)))
                         except Exception:
                             logger.exception("Could not notify maintenance refund user=%s", uid)
             await db.set_setting("maintenance_mode", new_val)

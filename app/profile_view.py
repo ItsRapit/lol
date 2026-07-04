@@ -18,7 +18,7 @@ async def build_profile_text(
 ) -> str:
     u = await db.get_user(telegram_id)
     if not u:
-        return "پروفایل پیدا نشد."
+        return "پروفایل پیدا نشد"
 
     title = await db.user_title(telegram_id)
     if title:
@@ -66,12 +66,12 @@ async def build_profile_text(
         lines.append(f"ایکس‌پی {current_xp}/{required_xp} {xp_bar(current_xp, required_xp)}")
     lines.append(f"🏆 {league_name} — {u['cups']} جام")
     if show_coins:
-        lines.append(f"🪙 سکه: {u['coins']}")
+        lines.append(f"🪙 سکه {u['coins']}")
     if positions:
         lines.append(positions)
     lines.extend([
         "",
-        f"⚔️ دوئل‌ها: {total_duels} | برد {u['wins']} / مساوی {u['draws']} / شکست {u['losses']}",
-        f"✅ پاسخ صحیح: {u['correct_answers']} | ❌ پاسخ غلط: {wrong}",
+        f"⚔️ دوئل‌ها {total_duels} | برد {u['wins']} / مساوی {u['draws']} / شکست {u['losses']}",
+        f"✅ پاسخ صحیح {u['correct_answers']} | ❌ پاسخ غلط {wrong}",
     ])
     return "\n".join(lines) + genre_analysis

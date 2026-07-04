@@ -17,12 +17,13 @@ router = Router()
 
 @router.message(F.text == "🛒 فروشگاه")
 async def shop_entry(message: Message) -> None:
-    await message.answer("🛒 فروشگاه\nنوع بسته را انتخاب کن:", reply_markup=shop_sections_keyboard())
+    await message.answer("🛒 فروشگاه", reply_markup=ReplyKeyboardRemove())
+    await message.answer("نوع بسته رو انتخاب کن", reply_markup=shop_sections_keyboard())
 
 
 @router.callback_query(F.data == "shop_back:sections")
 async def shop_back_sections(call: CallbackQuery) -> None:
-    await call.message.edit_text("نوع بسته را انتخاب کن:", reply_markup=shop_sections_keyboard())
+    await call.message.edit_text("نوع بسته رو انتخاب کن", reply_markup=shop_sections_keyboard())
     await call.answer()
 
 
@@ -33,10 +34,10 @@ async def shop_section(call: CallbackQuery, db: Database) -> None:
         packages = await db.shop_packages(package_type)
         title = "بسته‌های سکه" if package_type == "coins" else "بسته‌های سطح/XP"
         if not packages:
-            await call.message.edit_text(f"{title}\nفعلاً بسته‌ای در این بخش فعال نیست.", reply_markup=shop_sections_keyboard())
+            await call.message.edit_text(f"{title}\nفعلاً بسته‌ای تو این بخش فعال نیست", reply_markup=shop_sections_keyboard())
             await call.answer()
             return
-        await call.message.edit_text(f"{title}: یکی را انتخاب کن:", reply_markup=shop_keyboard(packages, package_type))
+        await call.message.edit_text(f"{title}\nیکی رو انتخاب کن", reply_markup=shop_keyboard(packages, package_type))
         await call.answer()
     except Exception:
         logger.exception("Shop section failed")
@@ -49,13 +50,13 @@ async def package_selected(call: CallbackQuery, db: Database, state: FSMContext)
         package_id = int(call.data.split(":")[1])
         p = await db.get_package(package_id)
         if not p or not p['is_active']:
-            await call.answer("بسته پیدا نشد.", show_alert=True)
+            await call.answer("این بسته پیدا نشد", show_alert=True)
             return
         tx_id = await db.create_shop_tx(call.from_user.id, package_id)
         await state.clear()
         await call.message.answer(
-            f"بسته: {p['title']}\nسکه: {p['coins']} | XP: {p['xp']}\nقیمت: {p['price_label']}\n\n"
-            "اگر کد تخفیف داری وارد کن، وگرنه ادامه بدون تخفیف را بزن.",
+            f"بسته {p['title']}\nسکه {p['coins']} | XP {p['xp']}\nقیمت {p['price_label']}\n\n"
+            "اگه کد تخفیف داری وارد کن، وگرنه بدون تخفیف ادامه بده",
             reply_markup=discount_apply_keyboard(tx_id),
         )
         await call.answer()
@@ -69,7 +70,7 @@ async def discount_apply_start(call: CallbackQuery, state: FSMContext) -> None:
     tx_id = int(call.data.split(":")[1])
     await state.set_state(ShopReceipt.waiting_discount)
     await state.update_data(tx_id=tx_id)
-    await call.message.answer("کد تخفیف را وارد کن:", reply_markup=cancel_keyboard())
+    await call.message.answer("کد تخفیف رو بفرست", reply_markup=cancel_keyboard())
     await call.answer()
 
 
@@ -80,14 +81,14 @@ async def discount_apply_text(message: Message, db: Database, state: FSMContext)
         tx_id = int(data['tx_id'])
         ok, result = await db.apply_discount_to_tx(tx_id, message.text.strip())
         if not ok:
-            await message.answer(result + "\nدوباره کد بفرست یا /cancel بزن.")
+            await message.answer(result + "\nدوباره کد بفرست یا /cancel بزن")
             return
         await state.clear()
-        await message.answer(f"✅ کد تخفیف اعمال شد. مبلغ نهایی: <b>{result}</b>")
+        await message.answer(f"✅ کد تخفیف اعمال شد\nمبلغ نهایی <b>{result}</b>")
         await send_payment_instructions(message, tx_id, db, state)
     except Exception:
         logger.exception("Apply discount failed")
-        await message.answer("خطا در اعمال کد تخفیف.")
+        await message.answer("خطا در اعمال کد تخفیف")
 
 
 @router.callback_query(F.data.startswith("pay:start:"))
@@ -104,7 +105,7 @@ async def payment_start_callback(call: CallbackQuery, db: Database, state: FSMCo
 async def send_payment_instructions(message: Message, tx_id: int, db: Database, state: FSMContext) -> None:
     tx = await db.get_tx(tx_id)
     if not tx:
-        await message.answer("تراکنش پیدا نشد.")
+        await message.answer("این تراکنش پیدا نشد")
         return
     await db.mark_tx_ready_to_pay(tx_id)
     provider = await get_payment_provider(db)
@@ -124,7 +125,7 @@ async def receive_receipt(message: Message, db: Database, state: FSMContext, bot
             rtype = 'photo'
             file_id = message.photo[-1].file_id
         elif not text:
-            await message.answer("لطفاً رسید را به‌صورت عکس یا متن بفرست.")
+            await message.answer("رسید رو به‌صورت عکس یا متن بفرست")
             return
         await db.save_receipt(tx_id, rtype, text, file_id)
         tx = await db.get_tx(tx_id)
@@ -140,10 +141,10 @@ async def receive_receipt(message: Message, db: Database, state: FSMContext, bot
             else:
                 await bot.send_message(admin_review_channel_id, caption, reply_markup=review_tx_keyboard(tx_id))
         await state.clear()
-        await message.answer("رسید ثبت شد و برای ادمین‌ها ارسال شد. بعد از بررسی خبر می‌دهیم.", reply_markup=main_menu(await db.is_admin(message.from_user.id)))
+        await message.answer("رسیدت ثبت شد و برای ادمین‌ها فرستاده شد، بعد از بررسی خبرت می‌کنیم", reply_markup=main_menu(await db.is_admin(message.from_user.id)))
     except Exception:
         logger.exception("Receipt receive failed")
-        await message.answer("خطا در ثبت رسید.")
+        await message.answer("خطا در ثبت رسید")
 
 
 @router.callback_query(F.data.startswith("tx:"))
@@ -166,10 +167,10 @@ async def review_tx(call: CallbackQuery, db: Database, bot: Bot) -> None:
             if tx['xp']:
                 added_parts.append(f"{tx['xp']} XP")
             added_text = " + ".join(added_parts) or "بسته"
-            balance_text = f"موجودی فعلی: {updated_user['coins']} سکه | XP: {updated_user['xp']}" if updated_user else ""
-            await bot.send_message(tx['user_id'], f"✅ پرداخت تایید شد.\n{added_text} به حسابت اضافه شد.\n{balance_text}")
+            balance_text = f"موجودی فعلی {updated_user['coins']} سکه | XP {updated_user['xp']}" if updated_user else ""
+            await bot.send_message(tx['user_id'], f"✅ پرداختت تایید شد\n{added_text} به حسابت اضافه شد\n{balance_text}")
         else:
-            await bot.send_message(tx['user_id'], "❌ رسید خرید شما رد شد.")
+            await bot.send_message(tx['user_id'], "❌ رسید خریدت رد شد")
         await call.message.edit_reply_markup(reply_markup=None)
         await call.answer("ثبت شد.")
     except Exception:

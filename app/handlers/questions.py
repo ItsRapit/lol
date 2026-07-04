@@ -17,48 +17,48 @@ async def submit_entry(message: Message, db: Database, state: FSMContext) -> Non
         limit = await db.get_int('daily_question_limit', 5)
         used = await db.daily_submissions_count(message.from_user.id)
         if used >= limit:
-            await message.answer(f"سقف ثبت سوال امروز شما ({limit}) تکمیل شده است.")
+            await message.answer(f"سقف ثبت سوال امروزت پر شده ({limit} تا)")
             return
         await state.set_state(QuestionSubmit.text)
-        await message.answer("➕ ثبت سوال\nمتن سوال را ارسال کن.", reply_markup=cancel_keyboard())
+        await message.answer("➕ ثبت سوال\nمتن سوالت رو بفرست", reply_markup=cancel_keyboard())
     except Exception:
         logger.exception("Submit entry failed")
-        await message.answer("خطا.")
+        await message.answer("یه خطا پیش اومد")
 
 
 @router.message(QuestionSubmit.text, F.text)
 async def q_text(message: Message, state: FSMContext) -> None:
     await state.update_data(text=message.text)
     await state.set_state(QuestionSubmit.option1)
-    await message.answer("گزینه 1:")
+    await message.answer("گزینه ۱ چیه؟")
 
 
 @router.message(QuestionSubmit.option1, F.text)
 async def q_o1(message: Message, state: FSMContext) -> None:
     await state.update_data(option1=message.text)
     await state.set_state(QuestionSubmit.option2)
-    await message.answer("گزینه 2:")
+    await message.answer("گزینه ۲ چیه؟")
 
 
 @router.message(QuestionSubmit.option2, F.text)
 async def q_o2(message: Message, state: FSMContext) -> None:
     await state.update_data(option2=message.text)
     await state.set_state(QuestionSubmit.option3)
-    await message.answer("گزینه 3:")
+    await message.answer("گزینه ۳ چیه؟")
 
 
 @router.message(QuestionSubmit.option3, F.text)
 async def q_o3(message: Message, state: FSMContext) -> None:
     await state.update_data(option3=message.text)
     await state.set_state(QuestionSubmit.option4)
-    await message.answer("گزینه 4:")
+    await message.answer("گزینه ۴ چیه؟")
 
 
 @router.message(QuestionSubmit.option4, F.text)
 async def q_o4(message: Message, state: FSMContext) -> None:
     await state.update_data(option4=message.text)
     await state.set_state(QuestionSubmit.correct)
-    await message.answer("شماره گزینه صحیح را بفرست (1 تا 4):")
+    await message.answer("گزینه درست کدومه؟ عدد ۱ تا ۴ رو بفرست")
 
 
 @router.message(QuestionSubmit.correct, F.text)
@@ -70,9 +70,10 @@ async def q_correct(message: Message, state: FSMContext, db: Database) -> None:
         await state.update_data(correct=n)
         await state.set_state(QuestionSubmit.genre)
         genres = await db.all_genres()
-        await message.answer("ژانرت رو انتخاب کن:", reply_markup=submission_genre_keyboard(genres))
+        await message.answer("ژانرت رو انتخاب کن", reply_markup=ReplyKeyboardRemove())
+        await message.answer("ژانرها", reply_markup=submission_genre_keyboard(genres))
     except ValueError:
-        await message.answer("فقط عدد 1 تا 4 قابل قبول است.")
+        await message.answer("فقط عدد ۱ تا ۴ قابل قبوله")
 
 
 async def save_question_submission(user_id: int, genre: str, db: Database, state: FSMContext, bot: Bot, admin_review_channel_id: int | None, target_message: Message) -> None:
@@ -86,7 +87,7 @@ async def save_question_submission(user_id: int, genre: str, db: Database, state
         )
         await bot.send_message(admin_review_channel_id, text, reply_markup=review_question_keyboard(qid))
     await state.clear()
-    await target_message.answer("سوال ثبت شد و بعد از تایید ادمین وارد بازی می‌شود.", reply_markup=main_menu(await db.is_admin(user_id)))
+    await target_message.answer("سوالت ثبت شد، بعد از تایید ادمین وارد بازی میشه", reply_markup=main_menu(await db.is_admin(user_id)))
 
 
 @router.message(QuestionSubmit.genre, F.text)
@@ -95,7 +96,7 @@ async def q_genre(message: Message, db: Database, state: FSMContext, bot: Bot, a
         genre = message.text.strip()
         valid_genres = await db.all_genres()
         if genre not in valid_genres:
-            await message.answer("ژانر نامعتبر است. لطفاً دقیقاً یکی از ژانرهای مجاز را بدون کم/زیاد کردن بنویس:\n" + "، ".join(valid_genres))
+            await message.answer("این ژانر معتبر نیست، دقیقاً یکی از این‌ها رو بنویس\n" + "، ".join(valid_genres))
             return
         await save_question_submission(message.from_user.id, genre, db, state, bot, admin_review_channel_id, message)
     except Exception:
@@ -121,9 +122,9 @@ async def q_review(call: CallbackQuery, db: Database, bot: Bot) -> None:
                 if reward > 0:
                     await db.change_coins(q['submitted_by'], reward, "question_approved_reward")
                 updated = await db.get_user(q['submitted_by'])
-                await bot.send_message(q['submitted_by'], f"✅ سوال پیشنهادی شما تایید شد.\n🎁 پاداش: {reward} سکه\nموجودی فعلی: {updated['coins'] if updated else '-'} سکه")
+                await bot.send_message(q['submitted_by'], f"✅ سوالت تایید شد\n🎁 پاداش {reward} سکه\nموجودی فعلی {updated['coins'] if updated else '-'} سکه")
             else:
-                await bot.send_message(q['submitted_by'], "❌ سوال پیشنهادی شما رد شد.")
+                await bot.send_message(q['submitted_by'], "❌ سوالت رد شد")
         await call.message.edit_reply_markup(reply_markup=None)
         await call.answer("ثبت شد.")
     except Exception:

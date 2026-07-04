@@ -210,24 +210,25 @@ async def referral(message: Message, db: Database, bot_username: str) -> None:
 async def daily_quests(message: Message, db: Database) -> None:
     u = await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     if u['is_blocked']:
-        await message.answer("حساب شما مسدود است.")
+        await message.answer("حساب شما مسدود است")
         return
     quests = await db.get_today_quests(message.from_user.id)
     if not quests:
-        await message.answer("امروز کوئستی برات نداریم، بعداً یه سر بزن.")
+        await message.answer("امروز کوئستی برات نداریم بعدا سر بزن", reply_markup=ReplyKeyboardRemove())
         return
-    lines = ["🎯 کوئست‌های امروزت:\n"]
+    lines = ["🎯 کوئست‌های امروزت\n"]
     for q in quests:
         progress = min(int(q['progress']), int(q['goal_count']))
         goal = int(q['goal_count'])
         if q['claimed']:
-            status = "✅ گرفتی"
+            status = "گرفتی"
         elif q['completed']:
-            status = "🎁 آماده‌ی دریافت"
+            status = "آماده دریافت"
         else:
             status = f"{progress}/{goal}"
-        lines.append(f"• {q['title']} — {status}\n  {q['description']}\n  جایزه: {q['reward_coins']} سکه + {q['reward_xp']} XP")
-    await message.answer("\n\n".join(lines), reply_markup=quests_keyboard(quests))
+        lines.append(f"{q['title']} — {status}\n{q['description']}\nجایزه {q['reward_coins']} سکه + {q['reward_xp']} XP")
+    await message.answer("\n\n".join(lines), reply_markup=ReplyKeyboardRemove())
+    await message.answer("برای دریافت جایزه یکی از دکمه‌ها رو بزن", reply_markup=quests_keyboard(quests))
 
 
 @router.callback_query(F.data.startswith("quest_claim:"))
@@ -236,21 +237,21 @@ async def quest_claim(call: CallbackQuery, db: Database) -> None:
         quest_id = int(call.data.split(":", 1)[1])
         result = await db.claim_quest_reward(call.from_user.id, quest_id)
         if not result:
-            await call.answer("این کوئست قبلاً گرفته شده یا هنوز کامل نشده.", show_alert=True)
+            await call.answer("این کوئست قبلا گرفته شده یا هنوز کامل نشده", show_alert=True)
             return
-        await call.answer(f"گرفتی! +{result['coins']} سکه, +{result['xp']} XP", show_alert=True)
+        await call.answer(f"گرفتی +{result['coins']} سکه +{result['xp']} XP", show_alert=True)
         quests = await db.get_today_quests(call.from_user.id)
-        lines = ["🎯 کوئست‌های امروزت:\n"]
+        lines = ["🎯 کوئست‌های امروزت\n"]
         for q in quests:
             progress = min(int(q['progress']), int(q['goal_count']))
             goal = int(q['goal_count'])
             if q['claimed']:
-                status = "✅ گرفتی"
+                status = "گرفتی"
             elif q['completed']:
-                status = "🎁 آماده‌ی دریافت"
+                status = "آماده دریافت"
             else:
                 status = f"{progress}/{goal}"
-            lines.append(f"• {q['title']} — {status}\n  {q['description']}\n  جایزه: {q['reward_coins']} سکه + {q['reward_xp']} XP")
+            lines.append(f"{q['title']} — {status}\n{q['description']}\nجایزه {q['reward_coins']} سکه + {q['reward_xp']} XP")
         await call.message.edit_text("\n\n".join(lines), reply_markup=quests_keyboard(quests))
     except Exception:
         logger.exception("Quest claim failed")

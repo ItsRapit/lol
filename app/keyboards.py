@@ -10,8 +10,8 @@ CANCEL_TEXT = "↩️ انصراف / برگشت"
 
 def main_menu(is_admin: bool = False, one_time_keyboard: bool = True) -> ReplyKeyboardMarkup:
     rows = [
-        [KeyboardButton(text="🎯 کوئست روزانه")],
         [KeyboardButton(text="⚔️ دوئل")],
+        [KeyboardButton(text="🎯 کوئست روزانه")],
         [KeyboardButton(text="🛒 فروشگاه"), KeyboardButton(text="🏆 لیدربورد")],
         [KeyboardButton(text="👤 پروفایل"), KeyboardButton(text="➕ ثبت سوال")],
         [KeyboardButton(text="🎁 رفرال")],
