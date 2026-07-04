@@ -829,7 +829,7 @@ async def notify_levelup_in_group(bot: Bot, chat_id: int, username: str, old_lev
         "⬆️ ...",
         "⬆️⬆️ ...",
         "⬆️⬆️⬆️ ...",
-        f"🎉 تبریک {username}\nلول {old_level} ← لول {new_level}\n{new_title}",
+        f"🎉 تبریک {username}\nرسیدی به لول {new_level}\n{new_title}",
     ]
     try:
         msg = await bot.send_message(chat_id, frames[0])

@@ -479,6 +479,9 @@ SETTING_LABELS = {
     "random_duel_win_coin_bonus": "جایزه برد دوئل شانسی",
     "winner_bonus_xp": "ایکس‌پی برد",
     "duel_draw_coin_reward": "جایزه مساوی",
+    "bot_duel_xp_per_correct": "ایکس‌پی هر پاسخ درست (دوئل ربات)",
+    "bot_duel_win_coins": "سکه برد دوئل ربات",
+    "bot_duel_win_xp": "ایکس‌پی برد دوئل ربات",
     "initial_signup_coins": "سکه شروع ثبت‌نام",
     "question_approval_reward_coins": "پاداش تایید سوال",
     "referral_referrer_coins": "رفرال دعوت‌کننده: سکه",
@@ -533,7 +536,7 @@ SETTING_CATEGORIES = {
     "rewards": ("🎁 جوایز و اقتصاد بازی", [
         "reward_coin_per_correct", "reward_xp_per_correct", "random_duel_win_coin_bonus",
         "winner_bonus_xp", "duel_draw_coin_reward", "initial_signup_coins",
-        "question_approval_reward_coins",
+        "question_approval_reward_coins", "bot_duel_xp_per_correct", "bot_duel_win_coins", "bot_duel_win_xp",
     ]),
     "powerups": ("🔋 پاورآپ‌ها", [
         "powerup_remove2_cost", "powerup_auto_answer_cost", "powerup_max_uses_per_duel",

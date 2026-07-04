@@ -65,6 +65,22 @@ async def admin_entry(message: Message, db: Database, state: FSMContext) -> None
         await message.answer("خطا.")
 
 
+@router.message(Command("bulk"))
+async def bulk_command(message: Message, db: Database, state: FSMContext, bot: Bot) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        await state.clear()
+        await state.set_state(BulkQuestionImport.waiting_json)
+        stamp = tehran_now().isoformat()
+        await state.update_data(bulk_chunks=[], bulk_updated_at=stamp)
+        asyncio.create_task(bulk_timeout_notice(state, bot, message.from_user.id, stamp))
+        await message.answer(bulk_help_text(await db.all_genres()), reply_markup=cancel_keyboard())
+    except Exception:
+        logger.exception("Bulk command failed")
+        await message.answer("خطا.")
+
+
 @router.message(Command("backup"))
 async def backup_command(message: Message, db: Database) -> None:
     try:
@@ -598,6 +614,14 @@ async def admin_callback(call: CallbackQuery, db: Database, state: FSMContext, b
                 f"• کل دوئل‌ها: {s['duels']}\n"
                 f"• دوئل‌های تمام‌شده: {s['finished_duels']}\n"
                 f"• دوئل‌های امروز: {s['duels_today']}\n\n"
+                "🧑‍🤝‍🧑 دوئل با بازیکن‌ها\n"
+                f"• کل: {s['human_duels']}\n"
+                f"• تمام‌شده: {s['human_duels_finished']}\n"
+                f"• امروز: {s['human_duels_today']}\n\n"
+                "🤖 دوئل با ربات\n"
+                f"• کل: {s['bot_duels']}\n"
+                f"• تمام‌شده: {s['bot_duels_finished']}\n"
+                f"• امروز: {s['bot_duels_today']}\n\n"
                 "🎮 بازی‌های گروهی\n"
                 f"• بازی گروهی انجام‌شده: {s['group_quiz_total']}\n"
                 f"• دوئل‌های گروهی انجام‌شده: {s['group_duel_total']}\n"
@@ -919,7 +943,7 @@ async def user_block_toggle(call: CallbackQuery, db: Database) -> None:
 
 
 @router.message(AdminFlow.waiting_admin_id, F.text)
-async def admin_id_save(message: Message, db: Database, state: FSMContext) -> None:
+async def admin_id_save(message: Message, db: Database, state: FSMContext, bot: Bot) -> None:
     try:
         if not await require_admin_message(message, db):
             return
@@ -929,10 +953,22 @@ async def admin_id_save(message: Message, db: Database, state: FSMContext) -> No
             await db.execute_write("INSERT OR REPLACE INTO admins(telegram_id,role,added_by,created_at) VALUES(?,?,?,?)", (target, 'admin', message.from_user.id, now_iso()))
             await db.log_admin(message.from_user.id, "admin_add", str(target))
             await message.answer("ادمین اضافه شد.")
+            try:
+                from app.main import ADMIN_COMMANDS
+                from aiogram.types import BotCommandScopeChat
+                await bot.set_my_commands(ADMIN_COMMANDS, scope=BotCommandScopeChat(chat_id=target))
+            except Exception:
+                logger.exception("Could not set commands for new admin %s", target)
         else:
             await db.execute_write("DELETE FROM admins WHERE telegram_id=? AND role<>'owner'", (target,))
             await db.log_admin(message.from_user.id, "admin_remove", str(target))
             await message.answer("ادمین حذف شد (مالک حذف نمی‌شود).")
+            try:
+                from app.main import PUBLIC_COMMANDS
+                from aiogram.types import BotCommandScopeChat
+                await bot.set_my_commands(PUBLIC_COMMANDS, scope=BotCommandScopeChat(chat_id=target))
+            except Exception:
+                logger.exception("Could not reset commands for removed admin %s", target)
         await state.clear()
     except ValueError:
         await message.answer("آیدی باید عددی باشد.")

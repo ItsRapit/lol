@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.db import Database
 from app.utils import league_with_emoji, rank_with_emoji
+from app.time_utils import jalali_date_diff_days
 
 
 def xp_bar(current_xp: int, required_xp: int) -> str:
@@ -58,6 +59,9 @@ async def build_profile_text(
         if weaknesses:
             genre_analysis += f"\n\n⚠️ نقاط ضعف:\n{weaknesses}"
 
+    avg_response = await db.user_avg_response_seconds(telegram_id)
+    joined_days = jalali_date_diff_days(u['created_at']) or 0
+
     lines = [
         f"👤 <b>{u['first_name'] or 'کاربر'}</b> {username}".rstrip(),
         f"{title_text} | لول {u['level']}",
@@ -74,4 +78,7 @@ async def build_profile_text(
         f"⚔️ دوئل‌ها {total_duels} | برد {u['wins']} / مساوی {u['draws']} / شکست {u['losses']}",
         f"✅ پاسخ صحیح {u['correct_answers']} | ❌ پاسخ غلط {wrong}",
     ])
+    if avg_response:
+        lines.append(f"⏱ میانگین زمان پاسخ {avg_response} ثانیه")
+    lines.append(f"📅 {joined_days} روزه عضو ربات هستی")
     return "\n".join(lines) + genre_analysis

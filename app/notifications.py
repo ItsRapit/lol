@@ -35,29 +35,29 @@ async def levelup_steps(old_level: int, new_level: int) -> list[str]:
             "⬆️ ...",
             "⬆️⬆️ ...",
             "⬆️⬆️⬆️ ...",
-            f"🎉 لول آپ!\nلول {old_level} ← لول {new_level}",
+            f"🎉 لول آپ!\nرسیدی به لول {new_level}",
         ]
     return [
         "💫",
         "💫✨💫",
         "💫✨🌟✨💫",
-        f"🚀 ارتقا!\nلول {old_level} ← لول {new_level}",
+        f"🚀 ارتقا!\nرسیدی به لول {new_level}",
     ]
 
 
 async def rankup_steps(old_rank: str, new_rank: str, old_level: int, new_level: int, include_level: bool) -> list[str]:
-    level_line = f"\nلول {old_level} ← لول {new_level}" if include_level else ""
+    level_line = f"\nرسیدی به لول {new_level}" if include_level else ""
     return [
         "🏆 ...",
         "🏆🏆 ...",
         "🏆🏆🏆 ...",
-        f"👑 ترفیع!\n{old_rank} ← {new_rank}{level_line}",
+        f"👑 ترفیع!\nرسیدی به {new_rank}{level_line}",
     ]
 
 
 async def title_steps(db: Database, old_title: str, new_title: str, old_rank: str, new_rank: str, old_level: int, new_level: int, level_up: bool, rank_up: bool) -> list[str]:
-    level_line = f"لول {old_level} ← لول {new_level}" if level_up else ""
-    rank_line = f"{old_rank} ← {new_rank}" if rank_up else ""
+    level_line = f"رسیدی به لول {new_level}" if level_up else ""
+    rank_line = f"رسیدی به {new_rank}" if rank_up else ""
     return [
         "⬛⬛⬛⬛⬛⬛⬛\n⬛⬛⬛⬛⬛⬛⬛\n⬛⬛⬛⬛⬛⬛⬛",
         "🟡⬛⬛⬛⬛⬛🟡\n⬛⬛⬛⬛⬛⬛⬛\n🟡⬛⬛⬛⬛⬛🟡",
@@ -77,7 +77,7 @@ async def demotion_steps(old_rank: str, new_rank: str) -> list[str]:
     return [
         "😔 این بار نشد...",
         "😔 این بار نشد...",
-        f"📉 سقوط رنک\n{old_rank} ← {new_rank}\nولی هنوز وقت هست 💪",
+        f"📉 سقوط رنک\nرفتی تو {new_rank}\nولی هنوز وقت هست 💪",
     ]
 
 

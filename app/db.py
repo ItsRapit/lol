@@ -423,10 +423,10 @@ class Database:
             "question_filter_words": ("ربات,ماشین,بازی", "Comma-separated words for question cleanup"),
             "levelup_anim1_step1": ("⬆️ داری لول آپ می‌کنی...", "Level-up animation 1 step 1"),
             "levelup_anim1_step2": ("⬆️⬆️ داری لول آپ می‌کنی...", "Level-up animation 1 step 2"),
-            "levelup_anim1_step3": ("🎉 لول آپ!\nبه {level_name} رسیدی!\nلول {old_level} ← لول {new_level}", "Level-up animation 1 final"),
+            "levelup_anim1_step3": ("🎉 لول آپ!\nبه {level_name} رسیدی!\nرسیدی به لول {new_level}", "Level-up animation 1 final"),
             "levelup_anim2_step1": ("💪 داری قوی‌تر می‌شی...", "Level-up animation 2 step 1"),
             "levelup_anim2_step2": ("💪💪 داری قوی‌تر می‌شی...", "Level-up animation 2 step 2"),
-            "levelup_anim2_step3": ("🚀 ارتقا!\n{level_name} شدی!\nلول {old_level} ← لول {new_level}", "Level-up animation 2 final"),
+            "levelup_anim2_step3": ("🚀 ارتقا!\n{level_name} شدی!\nرسیدی به لول {new_level}", "Level-up animation 2 final"),
             "rank_change_anim_step1": ("✨ یه اتفاق خاص داره می‌افته...", "Rank/league change animation step 1"),
             "rank_change_anim_step2": ("✨🌟 یه اتفاق خاص داره می‌افته...", "Rank/league change animation step 2"),
             "rank_change_anim_step3": ("👑 رتبه‌ات عوض شد!\n{old_rank} ← {new_rank}\nلول {new_level}", "Rank/league change animation final"),
@@ -445,6 +445,9 @@ class Database:
             "start_photo_file_id": ("", "Optional photo file_id for /start"),
             "random_duel_cost": ("5", "Coins charged for random matchmaking entry"),
             "bot_duel_cost": ("3", "Coins charged for a duel against the bot opponent"),
+            "bot_duel_xp_per_correct": ("2", "XP for each correct answer in a bot duel"),
+            "bot_duel_win_coins": ("5", "Coins for winning a bot duel"),
+            "bot_duel_win_xp": ("10", "XP for winning a bot duel"),
             "matchmaking_timeout_seconds": ("120", "Random matchmaking timeout seconds"),
             "maintenance_mode": ("0", "1 disables bot for non-admin users"),
             "maintenance_text": ("بات موقتاً در حال تعمیر است. لطفاً بعداً دوباره تلاش کنید.", "Shown during maintenance"),
@@ -679,6 +682,10 @@ class Database:
 
     async def is_admin(self, telegram_id: int) -> bool:
         return bool(await self.fetchone("SELECT 1 FROM admins WHERE telegram_id=?", (telegram_id,)))
+
+    async def all_admin_ids(self) -> list[int]:
+        rows = await self.fetchall("SELECT telegram_id FROM admins")
+        return [int(r["telegram_id"]) for r in rows]
 
     async def get_setting(self, key: str, default: str = "") -> str:
         row = await self.fetchone("SELECT value FROM settings WHERE key=?", (key,))
@@ -1132,15 +1139,39 @@ class Database:
         elif stats[p2]["correct"] > stats[p1]["correct"]:
             winner = p2
         await self.execute_write("UPDATE duels SET status='finished', finished_at=?, winner_id=? WHERE id=?", (now_iso(), winner, duel_id))
-        is_random_duel = not bool(duel["invite_token"])
+        is_bot_duel = duel["opponent_type"] == "bot"
+        is_random_duel = not is_bot_duel and not bool(duel["invite_token"])
         coin_per = await self.get_int("reward_coin_per_correct", 10)
         xp_per = await self.get_int("reward_xp_per_correct", 15)
         bonus = await self.get_int("winner_bonus_xp", 20)
         win_coin_bonus = await self.get_int("random_duel_win_coin_bonus", 20)
         draw_coin_reward = await self.get_int("duel_draw_coin_reward", 5)
+        bot_xp_per_correct = await self.get_int("bot_duel_xp_per_correct", 2)
+        bot_win_coins = await self.get_int("bot_duel_win_coins", 5)
+        bot_win_xp = await self.get_int("bot_duel_win_xp", 10)
         reward_details: dict[int, dict[str, int]] = {p1: {"answer_coins": 0, "win_coins": 0, "draw_coins": 0, "answer_xp": 0, "win_xp": 0}, p2: {"answer_coins": 0, "win_coins": 0, "draw_coins": 0, "answer_xp": 0, "win_xp": 0}}
         for uid, st in stats.items():
             if uid == self.BOT_OPPONENT_ID:
+                continue
+            if is_bot_duel:
+                if st["score"]:
+                    answer_xp = int(st["score"] * bot_xp_per_correct)
+                    if answer_xp:
+                        await self.change_xp(uid, answer_xp, "duel_correct", duel_id)
+                    reward_details[uid]["answer_xp"] = answer_xp
+                if winner == uid:
+                    if bot_win_coins:
+                        await self.change_coins(uid, bot_win_coins, "bot_duel_win_bonus", duel_id)
+                        reward_details[uid]["win_coins"] = bot_win_coins
+                    if bot_win_xp:
+                        await self.change_xp(uid, bot_win_xp, "winner_bonus", duel_id)
+                        reward_details[uid]["win_xp"] = bot_win_xp
+                    await self.execute_write("UPDATE users SET wins=wins+1, last_duel_at=? WHERE telegram_id=?", (now_iso(), uid))
+                    await self.bump_quest_progress(uid, "win_duels", 1, bot=bot)
+                elif winner is None:
+                    await self.execute_write("UPDATE users SET draws=draws+1, last_duel_at=? WHERE telegram_id=?", (now_iso(), uid))
+                else:
+                    await self.execute_write("UPDATE users SET losses=losses+1, last_duel_at=? WHERE telegram_id=?", (now_iso(), uid))
                 continue
             if st["score"]:
                 answer_coins = int(st["score"] * coin_per) if is_random_duel else 0
@@ -1220,6 +1251,14 @@ class Database:
         weakness_candidates = [r for r in rows if r['genre'] not in strength_genres]
         weaknesses = sorted(weakness_candidates, key=lambda r: (float(r['pct']), -int(r['total'])))[:2]
         return {'strengths': strengths, 'weaknesses': weaknesses}
+
+    async def user_avg_response_seconds(self, user_id: int) -> float:
+        row = await self.fetchone(
+            "SELECT AVG(response_ms) avg_ms FROM duel_answers WHERE user_id=? AND response_ms IS NOT NULL",
+            (user_id,),
+        )
+        avg_ms = row["avg_ms"] if row and row["avg_ms"] is not None else None
+        return round(avg_ms / 1000, 1) if avg_ms else 0.0
 
 
     async def duel_user_summary(self, duel_id: int, user_id: int) -> dict[str, Any]:
@@ -1565,6 +1604,12 @@ class Database:
             ("duels", "SELECT COUNT(*) c FROM duels", ()),
             ("finished_duels", "SELECT COUNT(*) c FROM duels WHERE status='finished'", ()),
             ("duels_today", "SELECT COUNT(*) c FROM duels WHERE status='finished' AND finished_at>=?", (today_start,)),
+            ("bot_duels", "SELECT COUNT(*) c FROM duels WHERE opponent_type='bot'", ()),
+            ("bot_duels_finished", "SELECT COUNT(*) c FROM duels WHERE opponent_type='bot' AND status='finished'", ()),
+            ("bot_duels_today", "SELECT COUNT(*) c FROM duels WHERE opponent_type='bot' AND status='finished' AND finished_at>=?", (today_start,)),
+            ("human_duels", "SELECT COUNT(*) c FROM duels WHERE opponent_type<>'bot'", ()),
+            ("human_duels_finished", "SELECT COUNT(*) c FROM duels WHERE opponent_type<>'bot' AND status='finished'", ()),
+            ("human_duels_today", "SELECT COUNT(*) c FROM duels WHERE opponent_type<>'bot' AND status='finished' AND finished_at>=?", (today_start,)),
             ("group_quiz_total", "SELECT COUNT(*) c FROM group_game_logs WHERE game_type='quiz'", ()),
             ("group_duel_total", "SELECT COUNT(*) c FROM group_game_logs WHERE game_type='duel'", ()),
             ("group_games_today", "SELECT COUNT(*) c FROM group_game_logs WHERE finished_at>=?", (today_start,)),

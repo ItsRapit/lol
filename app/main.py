@@ -4,7 +4,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 
 from app.config import get_settings
 from app.db import Database
@@ -14,6 +14,39 @@ from app.middlewares import ActiveDuelMenuGuardMiddleware
 from app.scheduler import setup_scheduler
 
 logger = logging.getLogger(__name__)
+
+PUBLIC_COMMANDS = [
+    BotCommand(command="start", description="شروع ربات"),
+    BotCommand(command="help", description="راهنما"),
+    BotCommand(command="cancel", description="لغو عملیات جاری"),
+]
+
+ADMIN_COMMANDS = PUBLIC_COMMANDS + [
+    BotCommand(command="admin", description="پنل ادمین"),
+    BotCommand(command="bulk", description="ثبت گروهی سوال"),
+    BotCommand(command="guide", description="راهنمای کامندهای ادمین"),
+    BotCommand(command="user", description="جستجوی کاربر با آیدی"),
+    BotCommand(command="version", description="نمایش نسخه فعال"),
+    BotCommand(command="sync_defaults", description="همگام‌سازی تنظیمات پیش‌فرض"),
+    BotCommand(command="migrate_xp_curve", description="اعمال منحنی XP جدید"),
+    BotCommand(command="setlevel", description="تنظیم نام و ایموجی لول"),
+    BotCommand(command="titles", description="مدیریت لقب‌ها"),
+    BotCommand(command="deltitle", description="حذف لقب"),
+    BotCommand(command="backup", description="دریافت بک‌آپ کامل دیتابیس"),
+    BotCommand(command="backup_questions", description="بک‌آپ سوالات"),
+    BotCommand(command="backup_users", description="بک‌آپ کاربران"),
+    BotCommand(command="backup_settings", description="بک‌آپ تنظیمات"),
+    BotCommand(command="upload_backup", description="آپلود و ذخیره فایل بک‌آپ روی Volume"),
+]
+
+
+async def setup_bot_commands(bot: Bot, db: Database) -> None:
+    await bot.set_my_commands(PUBLIC_COMMANDS, scope=BotCommandScopeDefault())
+    for admin_id in await db.all_admin_ids():
+        try:
+            await bot.set_my_commands(ADMIN_COMMANDS, scope=BotCommandScopeChat(chat_id=admin_id))
+        except Exception:
+            logger.exception("Could not set admin commands for %s", admin_id)
 
 
 async def main() -> None:
@@ -50,25 +83,7 @@ async def main() -> None:
     dp.include_router(questions.router)
     dp.include_router(duel.router)
 
-    await bot.set_my_commands([
-        BotCommand(command="start", description="شروع"),
-        BotCommand(command="admin", description="پنل ادمین"),
-        BotCommand(command="guide", description="راهنمای کامندهای ادمین"),
-        BotCommand(command="user", description="جستجوی کاربر با آیدی"),
-        BotCommand(command="version", description="نمایش نسخه فعال"),
-        BotCommand(command="sync_defaults", description="همگام‌سازی تنظیمات پیش‌فرض"),
-        BotCommand(command="migrate_xp_curve", description="اعمال منحنی XP جدید"),
-        BotCommand(command="setlevel", description="تنظیم نام و ایموجی لول"),
-        BotCommand(command="titles", description="مدیریت لقب‌ها"),
-        BotCommand(command="deltitle", description="حذف لقب"),
-        BotCommand(command="help", description="راهنما"),
-        BotCommand(command="backup", description="دریافت بک‌آپ کامل دیتابیس"),
-        BotCommand(command="backup_questions", description="بک‌آپ سوالات"),
-        BotCommand(command="backup_users", description="بک‌آپ کاربران"),
-        BotCommand(command="backup_settings", description="بک‌آپ تنظیمات"),
-        BotCommand(command="upload_backup", description="آپلود و ذخیره فایل بک‌آپ روی Volume"),
-        BotCommand(command="cancel", description="لغو عملیات جاری"),
-    ])
+    await setup_bot_commands(bot, db)
 
     logger.info("Bot started as @%s", bot_username)
     scheduler = setup_scheduler(bot, db)
