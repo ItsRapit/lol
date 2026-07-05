@@ -858,7 +858,6 @@ async def rematch_timeout(requester_id: int, opponent_id: int, opponent_chat_id:
         key = (requester_id, opponent_id)
         task = rematch_timeout_tasks.pop(key, None)
         if task:
-            rematch_sent_pairs.discard(key)
             try:
                 await bot.edit_message_text(
                     "⏱ به دلیل عدم پاسخ درخواست بازی مجدد منقضی شد و رد شد",
@@ -880,7 +879,7 @@ async def rematch_request_callback(call: CallbackQuery, db: Database, bot: Bot) 
         opponent_id = int(call.data.split(":")[1])
         key = (call.from_user.id, opponent_id)
         if key in rematch_sent_pairs:
-            await call.answer("دیگه نمی‌تونی برای این حریف درخواست مجدد بفرستی", show_alert=True)
+            await call.answer("بیشتر از یک درخواست نمی‌تونی ارسال کنی", show_alert=True)
             return
         active = await db.active_duel_for_user(call.from_user.id)
         if active:
@@ -904,7 +903,6 @@ async def rematch_decline_callback(call: CallbackQuery, bot: Bot) -> None:
         requester_id = int(call.data.split(":")[1])
         key = (requester_id, call.from_user.id)
         task = rematch_timeout_tasks.pop(key, None)
-        rematch_sent_pairs.discard(key)
         if task and not task.done():
             task.cancel()
         if not task:
@@ -923,7 +921,6 @@ async def rematch_accept_callback(call: CallbackQuery, db: Database, bot: Bot) -
         requester_id = int(call.data.split(":")[1])
         key = (requester_id, call.from_user.id)
         task = rematch_timeout_tasks.pop(key, None)
-        rematch_sent_pairs.discard(key)
         if task and not task.done():
             task.cancel()
         if not task:

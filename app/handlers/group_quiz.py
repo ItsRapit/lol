@@ -986,7 +986,7 @@ def duel_answer_keyboard(lobby_id: str, q_index: int, q) -> InlineKeyboardMarkup
     b = InlineKeyboardBuilder()
     for i, label in enumerate(["الف", "ب", "ج", "د"], 1):
         b.button(text=f"{label}) {q[f'option{i}']}", callback_data=f"gduelans:{lobby_id}:{q_index}:{i}")
-    b.adjust(1)
+    b.adjust(2, 2)
     return b.as_markup()
 
 
@@ -1034,10 +1034,10 @@ async def send_group_duel_question(bot: Bot, db: Database, game: GroupDuelGame, 
 
 @router.callback_query(F.data.startswith("gduelans:"))
 async def group_duel_answer(call: CallbackQuery, db: Database, bot: Bot) -> None:
-    await call.answer()
     _, lobby_id, idx_s, opt_s = call.data.split(":")
     game = group_duels.get(lobby_id)
     if not game:
+        await call.answer()
         return
     idx, opt = int(idx_s), int(opt_s)
     if call.from_user.id not in game.lobby.players:
@@ -1047,6 +1047,11 @@ async def group_duel_answer(call: CallbackQuery, db: Database, bot: Bot) -> None
         await call.answer("قبلاً جواب دادی", show_alert=False)
         return
     game.answered[idx][call.from_user.id] = opt
+    q = game.questions[idx]
+    if opt == int(q['correct_option']):
+        await call.answer("✅ جواب درست بود", show_alert=False)
+    else:
+        await call.answer("❌ جواب غلط بود", show_alert=False)
     if len(game.answered[idx]) >= len(game.lobby.players):
         await resolve_group_duel_question(bot, db, game, idx)
 
