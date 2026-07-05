@@ -26,6 +26,7 @@ class DuelRuntime:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     question_started_at: float = 0.0
     timeout_task: asyncio.Task | None = None
+    resolved_qid: int | None = None
 
 
 runtimes: dict[int, DuelRuntime] = {}
@@ -53,6 +54,17 @@ async def safe_edit_reply_markup(message, reply_markup) -> None:
 def runtime(duel_id: int) -> DuelRuntime:
     runtimes.setdefault(duel_id, DuelRuntime())
     return runtimes[duel_id]
+
+
+async def try_claim_question_resolution(duel_id: int, qid: int) -> bool:
+    """Returns True only for the first caller resolving this question; guards against
+    the user-answer path and the bot-answer path both racing to finish the same question."""
+    rt = runtime(duel_id)
+    async with rt.lock:
+        if rt.resolved_qid == qid:
+            return False
+        rt.resolved_qid = qid
+        return True
 
 
 @router.message(F.text == "⚔️ دوئل")
@@ -404,12 +416,13 @@ async def bot_answer_question(duel_id: int, qid: int, level: int, timer_seconds:
         response_ms = int(delay * 1000)
         await db.record_answer(duel_id, qid, BOT_OPPONENT_ID, selected, correct_option, response_ms, bot=bot)
         if await db.answered_count_for_question(duel_id, qid) >= 2:
-            rt = runtime(duel_id)
-            if rt.timeout_task and not rt.timeout_task.done():
-                rt.timeout_task.cancel()
-            await edit_duel_question_results(duel_id, qid, db, bot)
-            await asyncio.sleep(1.2)
-            await advance_duel(duel_id, db, bot, qid)
+            if await try_claim_question_resolution(duel_id, qid):
+                rt = runtime(duel_id)
+                if rt.timeout_task and not rt.timeout_task.done():
+                    rt.timeout_task.cancel()
+                await edit_duel_question_results(duel_id, qid, db, bot)
+                await asyncio.sleep(1.2)
+                await advance_duel(duel_id, db, bot, qid)
     except asyncio.CancelledError:
         return
     except Exception:
@@ -511,6 +524,8 @@ async def timeout_question(duel_id: int, qid: int, seconds: int, db: Database, b
             inactive_users = [uid for uid in [duel['player1_id'], duel['player2_id']] if unanswered_streaks.get((duel_id, uid), 0) >= 3]
             await forfeit_inactive_duel(duel_id, inactive_users, db, bot)
             return
+        if not await try_claim_question_resolution(duel_id, qid):
+            return
         await edit_duel_question_results(duel_id, qid, db, bot)
         await asyncio.sleep(1.2)
         await advance_duel(duel_id, db, bot, qid)
@@ -556,10 +571,11 @@ async def answer_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
         else:
             await call.answer('❌ اشتباه', show_alert=False)
         if await db.answered_count_for_question(duel_id, qid) >= 2:
-            rt.timeout_task.cancel() if rt.timeout_task and not rt.timeout_task.done() else None
-            await edit_duel_question_results(duel_id, qid, db, bot)
-            await asyncio.sleep(1.2)
-            await advance_duel(duel_id, db, bot, qid)
+            if await try_claim_question_resolution(duel_id, qid):
+                rt.timeout_task.cancel() if rt.timeout_task and not rt.timeout_task.done() else None
+                await edit_duel_question_results(duel_id, qid, db, bot)
+                await asyncio.sleep(1.2)
+                await advance_duel(duel_id, db, bot, qid)
     except Exception:
         logger.exception("Answer failed")
         await call.answer("خطا", show_alert=True)
