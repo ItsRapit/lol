@@ -1180,9 +1180,9 @@ async def group_report_menu(call: CallbackQuery, bot: Bot) -> None:
             reply_markup=group_report_questions_keyboard(game_id, len(game.questions), prefix),
         )
         if call.message:
-            await call.message.answer("تو پی‌وی فرستادم برات")
+            await call.message.answer("گزارش رو تو پی‌وی واست فرستادم")
         else:
-            await call.answer("گزارش و جواب‌ها در پی‌وی ارسال شد", show_alert=True)
+            await call.answer("گزارش رو تو پی‌وی واست فرستادم", show_alert=True)
     except Exception:
         logger.exception("Group report menu failed")
         try:

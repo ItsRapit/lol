@@ -101,7 +101,7 @@ def leaderboard_period_keyboard(basis: str) -> InlineKeyboardMarkup:
 def shop_sections_keyboard() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="🪙 بسته‌های سکه", callback_data="shop_section:coins")
-    b.button(text="⭐ بسته‌های سطح/XP", callback_data="shop_section:xp")
+    b.button(text="⭐ بسته‌های ایکس‌پی", callback_data="shop_section:xp")
     b.adjust(1)
     return b.as_markup()
 
@@ -490,6 +490,7 @@ SETTING_LABELS = {
     "bot_duel_xp_per_correct": "ایکس‌پی هر پاسخ درست (دوئل ربات)",
     "bot_duel_win_coins": "سکه برد دوئل ربات",
     "bot_duel_win_xp": "ایکس‌پی برد دوئل ربات",
+    "weekly_reward_coins": "سکه هدیه بازگشت کاربر غیرفعال",
     "initial_signup_coins": "سکه شروع ثبت‌نام",
     "question_approval_reward_coins": "پاداش تایید سوال",
     "referral_referrer_coins": "رفرال دعوت‌کننده: سکه",
@@ -545,6 +546,7 @@ SETTING_CATEGORIES = {
         "reward_coin_per_correct", "reward_xp_per_correct", "random_duel_win_coin_bonus",
         "winner_bonus_xp", "duel_draw_coin_reward", "initial_signup_coins",
         "question_approval_reward_coins", "bot_duel_xp_per_correct", "bot_duel_win_coins", "bot_duel_win_xp",
+        "weekly_reward_coins",
     ]),
     "powerups": ("🔋 پاورآپ‌ها", [
         "powerup_remove2_cost", "powerup_auto_answer_cost", "powerup_max_uses_per_duel",

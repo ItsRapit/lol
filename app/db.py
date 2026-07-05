@@ -462,7 +462,7 @@ class Database:
             "streak_day_6_coins": ("30", "First-week daily aid day 6 coins"),
             "streak_day_7_coins": ("50", "First-week daily aid day 7 coins"),
             "streak_day_7_xp": ("0", "Disabled; daily aid day 7 XP"),
-            "weekly_reward_coins": ("20", "Weekly reward coins after first week"),
+            "weekly_reward_coins": ("30", "Coins gifted to inactive users in the weekly re-engagement gift"),
         }
         for k, (v, d) in defaults.items():
             await self.execute_write("INSERT OR IGNORE INTO settings(key,value,description) VALUES(?,?,?)", (k, v, d))

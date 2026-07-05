@@ -21,13 +21,10 @@ QUEST_REMINDER_WITH_PROGRESS = [
 ]
 
 INACTIVE_GIFT_LINES = [
-    "چند وقته پیدات نیست! {coins} تا سکه گذاشتم تو حسابت، بیا یه بازی بزن 🎮",
-    "دلمون برات تنگ شده بود، {coins} سکه هدیه گذاشتیم برات. بیا امتحان کن 🎮",
+    "چند وقته پیدات نیست، {coins} سکه گذاشتم تو حسابت، بیا یه بازی بزن 🎮",
+    "دلمون برات تنگ شده بود، {coins} سکه هدیه گذاشتم جیبت، پاشو یه دوئلی بزن",
     "خیلی وقته سر نزدی، {coins} سکه بهت اضافه کردیم، همین الان بازی کن 🎮",
 ]
-
-INACTIVE_GIFT_COINS = 30
-
 
 async def send_daily_quest_reminders(bot: Bot, db: Database) -> None:
     try:
@@ -52,12 +49,13 @@ async def send_daily_quest_reminders(bot: Bot, db: Database) -> None:
 
 async def send_inactive_user_gifts(bot: Bot, db: Database) -> None:
     try:
+        coins = await db.get_int("weekly_reward_coins", 30)
         users = await db.inactive_users_for_gift(days=7)
         for u in users:
             try:
-                await db.change_coins(u["telegram_id"], INACTIVE_GIFT_COINS, "inactive_weekly_gift")
+                await db.change_coins(u["telegram_id"], coins, "inactive_weekly_gift")
                 await db.mark_inactive_gift_sent(u["telegram_id"])
-                text = random.choice(INACTIVE_GIFT_LINES).format(coins=INACTIVE_GIFT_COINS)
+                text = random.choice(INACTIVE_GIFT_LINES).format(coins=coins)
                 await bot.send_message(u["telegram_id"], text)
             except TelegramForbiddenError:
                 await db.execute_write("UPDATE users SET is_blocked=1 WHERE telegram_id=?", (u["telegram_id"],))

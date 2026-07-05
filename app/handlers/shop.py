@@ -31,7 +31,7 @@ async def shop_section(call: CallbackQuery, db: Database) -> None:
     try:
         package_type = call.data.split(":", 1)[1]
         packages = await db.shop_packages(package_type)
-        title = "بسته‌های سکه" if package_type == "coins" else "بسته‌های سطح/XP"
+        title = "بسته‌های سکه" if package_type == "coins" else "بسته‌های ایکس‌پی"
         if not packages:
             await call.message.edit_text(f"{title}\nفعلاً بسته‌ای تو این بخش فعال نیست", reply_markup=shop_sections_keyboard())
             await call.answer()
@@ -54,7 +54,7 @@ async def package_selected(call: CallbackQuery, db: Database, state: FSMContext)
         tx_id = await db.create_shop_tx(call.from_user.id, package_id)
         await state.clear()
         await call.message.answer(
-            f"بسته {p['title']}\nسکه {p['coins']} | XP {p['xp']}\nقیمت {p['price_label']}\n\n"
+            f"بسته {p['title']}\nسکه {p['coins']} | ایکس‌پی {p['xp']}\nقیمت {p['price_label']}\n\n"
             "اگه کد تخفیف داری وارد کن، وگرنه بدون تخفیف ادامه بده",
             reply_markup=discount_apply_keyboard(tx_id),
         )
@@ -164,9 +164,9 @@ async def review_tx(call: CallbackQuery, db: Database, bot: Bot) -> None:
             if tx['coins']:
                 added_parts.append(f"{tx['coins']} سکه")
             if tx['xp']:
-                added_parts.append(f"{tx['xp']} XP")
+                added_parts.append(f"{tx['xp']} ایکس‌پی")
             added_text = " + ".join(added_parts) or "بسته"
-            balance_text = f"موجودی فعلی {updated_user['coins']} سکه | XP {updated_user['xp']}" if updated_user else ""
+            balance_text = f"موجودی فعلی {updated_user['coins']} سکه | ایکس‌پی {updated_user['xp']}" if updated_user else ""
             await bot.send_message(tx['user_id'], f"✅ پرداختت تایید شد\n{added_text} به حسابت اضافه شد\n{balance_text}")
         else:
             await bot.send_message(tx['user_id'], "❌ رسید خریدت رد شد")
