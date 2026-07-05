@@ -1161,7 +1161,6 @@ def _report_game_by_prefix(prefix: str, game_id: str):
 
 @router.callback_query(F.data.startswith(("gqreport:menu:", "gdreport:menu:")))
 async def group_report_menu(call: CallbackQuery, bot: Bot) -> None:
-    await call.answer()
     try:
         prefix, _, game_id = call.data.split(":", 2)
         game = _report_game_by_prefix(prefix, game_id)
@@ -1179,10 +1178,7 @@ async def group_report_menu(call: CallbackQuery, bot: Bot) -> None:
             "\n".join(lines),
             reply_markup=group_report_questions_keyboard(game_id, len(game.questions), prefix),
         )
-        if call.message:
-            await call.message.answer("گزارش رو تو پی‌وی واست فرستادم")
-        else:
-            await call.answer("گزارش رو تو پی‌وی واست فرستادم", show_alert=True)
+        await call.answer("گزارش رو تو پی‌وی واست فرستادم", show_alert=True)
     except Exception:
         logger.exception("Group report menu failed")
         try:
@@ -1193,7 +1189,6 @@ async def group_report_menu(call: CallbackQuery, bot: Bot) -> None:
 
 @router.callback_query(F.data.startswith(("gqreport:q:", "gdreport:q:")))
 async def group_report_question(call: CallbackQuery, db: Database, bot: Bot, reports_channel_id: int | None) -> None:
-    await call.answer()
     try:
         prefix, _, game_id, idx_s = call.data.split(":", 3)
         game = _report_game_by_prefix(prefix, game_id)
@@ -1219,10 +1214,7 @@ async def group_report_question(call: CallbackQuery, db: Database, bot: Bot, rep
                 f"📅 {jalali_datetime(now_iso())}",
                 reply_markup=report_admin_keyboard(q['id'], report_id),
             )
-        if call.message:
-            await call.message.answer("✅ گزارش سوال ثبت شد")
-        else:
-            await call.answer("✅ گزارش ثبت شد", show_alert=True)
+        await call.answer("✅ گزارش سوال ثبت شد", show_alert=True)
     except Exception:
         logger.exception("Group report question failed")
         try:
