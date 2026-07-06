@@ -51,6 +51,7 @@ class GroupGame:
     question_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     question_ended: bool = False
     game_ended: bool = False
+    auto_answer_uses: dict[int, int] = field(default_factory=dict)  # user_id -> uses
 
 
 @dataclass
@@ -63,6 +64,7 @@ class GroupDuelGame:
     resolved: set[int] = field(default_factory=set)
     remaining: dict[int, int] = field(default_factory=dict)
     current_idx: int = 0
+    auto_answer_uses: dict[int, int] = field(default_factory=dict)  # user_id -> uses
 
 
 lobbies: dict[str, GroupLobby] = {}
@@ -299,11 +301,12 @@ def group_settings_keyboard(lobby: GroupLobby) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def answer_keyboard(lobby_id: str, q_index: int, q) -> InlineKeyboardMarkup:
+def answer_keyboard(lobby_id: str, q_index: int, q, auto_cost: int = 10) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     for i, label in enumerate(["الف", "ب", "ج", "د"], 1):
         b.button(text=f"{label}) {q[f'option{i}']}", callback_data=f"gquiz:ans:{lobby_id}:{q_index}:{i}")
-    b.adjust(1)
+    b.button(text=f"🎯 جواب خودکار — {auto_cost}🪙", callback_data=f"gquiz:auto:{lobby_id}:{q_index}")
+    b.adjust(2, 2, 1)
     return b.as_markup()
 
 
@@ -740,7 +743,8 @@ async def send_group_question(bot: Bot, db: Database, game: GroupGame, idx: int)
     total_seconds = game.lobby.timer_seconds
     game.remaining[idx] = total_seconds
     text = group_question_text(game, idx, total_seconds, total_seconds)
-    await edit_lobby(bot, game.lobby, text, answer_keyboard(game.lobby.lobby_id, idx, q))
+    auto_cost = await db.get_int("group_auto_answer_cost", 10)
+    await edit_lobby(bot, game.lobby, text, answer_keyboard(game.lobby.lobby_id, idx, q, auto_cost))
     old_task = game.timer_tasks.get(idx)
     if old_task and not old_task.done():
         old_task.cancel()
@@ -768,6 +772,47 @@ async def group_answer(call: CallbackQuery, db: Database, bot: Bot) -> None:
     q = game.questions[idx]
     result_text = "✅ درست جواب دادی" if opt == int(q['correct_option']) else "❌ اشتباه جواب دادی"
     await call.answer(result_text, show_alert=False)
+    if len(game.answered[idx]) >= total:
+        task = game.timer_tasks.get(idx)
+        if task and not task.done():
+            task.cancel()
+        await resolve_group_question(bot, db, game, idx)
+
+
+@router.callback_query(F.data.startswith("gquiz:auto:"))
+async def group_auto_answer(call: CallbackQuery, db: Database, bot: Bot) -> None:
+    _, _, lobby_id, idx_s = call.data.split(":")
+    game = games.get(lobby_id)
+    if not game:
+        await call.answer()
+        return
+    idx = int(idx_s)
+    if idx in game.resolved:
+        await call.answer("این سوال تموم شده", show_alert=False)
+        return
+    if call.from_user.id not in game.lobby.players:
+        await call.answer("تو عضو این بازی نیستی", show_alert=True)
+        return
+    if call.from_user.id in game.answered.setdefault(idx, {}):
+        await call.answer("قبلاً جواب دادی", show_alert=False)
+        return
+    max_uses = await db.get_int("group_auto_answer_max_uses", 3)
+    uses = game.auto_answer_uses.get(call.from_user.id, 0)
+    if uses >= max_uses:
+        await call.answer(f"سقف استفاده از جواب خودکار ({max_uses} بار) پر شده", show_alert=True)
+        return
+    cost = await db.get_int("group_auto_answer_cost", 10)
+    user = await db.get_user(call.from_user.id)
+    if not user or user["coins"] < cost:
+        await call.answer(f"برای جواب خودکار {cost} سکه لازم داری", show_alert=True)
+        return
+    await db.change_coins(call.from_user.id, -cost, "group_auto_answer")
+    game.auto_answer_uses[call.from_user.id] = uses + 1
+    q = game.questions[idx]
+    correct_option = int(q["correct_option"])
+    game.answered[idx][call.from_user.id] = correct_option
+    await call.answer("✅ جواب درست ثبت شد", show_alert=False)
+    total = len(game.lobby.players)
     if len(game.answered[idx]) >= total:
         task = game.timer_tasks.get(idx)
         if task and not task.done():
@@ -982,11 +1027,12 @@ async def group_duel_genre_selected(call: CallbackQuery, bot: Bot, db: Database)
             pass
 
 
-def duel_answer_keyboard(lobby_id: str, q_index: int, q) -> InlineKeyboardMarkup:
+def duel_answer_keyboard(lobby_id: str, q_index: int, q, auto_cost: int = 10) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     for i, label in enumerate(["الف", "ب", "ج", "د"], 1):
         b.button(text=f"{label}) {q[f'option{i}']}", callback_data=f"gduelans:{lobby_id}:{q_index}:{i}")
-    b.adjust(2, 2)
+    b.button(text=f"🎯 جواب خودکار — {auto_cost}🪙", callback_data=f"gduelauto:{lobby_id}:{q_index}")
+    b.adjust(2, 2, 1)
     return b.as_markup()
 
 
@@ -1028,7 +1074,8 @@ async def send_group_duel_question(bot: Bot, db: Database, game: GroupDuelGame, 
     game.answered[idx] = {}
     total_seconds = await db.get_int('group_quiz_timer_seconds', 30)
     game.remaining[idx] = total_seconds
-    await edit_lobby(bot, game.lobby, group_duel_question_text(game, idx, total_seconds, total_seconds), duel_answer_keyboard(game.lobby.lobby_id, idx, game.questions[idx]))
+    auto_cost = await db.get_int("group_auto_answer_cost", 10)
+    await edit_lobby(bot, game.lobby, group_duel_question_text(game, idx, total_seconds, total_seconds), duel_answer_keyboard(game.lobby.lobby_id, idx, game.questions[idx], auto_cost))
     asyncio.create_task(group_duel_timeout(bot, db, game, idx, total_seconds))
 
 
@@ -1052,6 +1099,40 @@ async def group_duel_answer(call: CallbackQuery, db: Database, bot: Bot) -> None
         await call.answer("✅ جواب درست بود", show_alert=False)
     else:
         await call.answer("❌ جواب غلط بود", show_alert=False)
+    if len(game.answered[idx]) >= len(game.lobby.players):
+        await resolve_group_duel_question(bot, db, game, idx)
+
+
+@router.callback_query(F.data.startswith("gduelauto:"))
+async def group_duel_auto_answer(call: CallbackQuery, db: Database, bot: Bot) -> None:
+    _, lobby_id, idx_s = call.data.split(":")
+    game = group_duels.get(lobby_id)
+    if not game:
+        await call.answer()
+        return
+    idx = int(idx_s)
+    if call.from_user.id not in game.lobby.players:
+        await call.answer("تو عضو این دوئل نیستی", show_alert=True)
+        return
+    if call.from_user.id in game.answered.setdefault(idx, {}):
+        await call.answer("قبلاً جواب دادی", show_alert=False)
+        return
+    max_uses = await db.get_int("group_auto_answer_max_uses", 3)
+    uses = game.auto_answer_uses.get(call.from_user.id, 0)
+    if uses >= max_uses:
+        await call.answer(f"سقف استفاده از جواب خودکار ({max_uses} بار) پر شده", show_alert=True)
+        return
+    cost = await db.get_int("group_auto_answer_cost", 10)
+    user = await db.get_user(call.from_user.id)
+    if not user or user["coins"] < cost:
+        await call.answer(f"برای جواب خودکار {cost} سکه لازم داری", show_alert=True)
+        return
+    await db.change_coins(call.from_user.id, -cost, "group_auto_answer")
+    game.auto_answer_uses[call.from_user.id] = uses + 1
+    q = game.questions[idx]
+    correct_option = int(q["correct_option"])
+    game.answered[idx][call.from_user.id] = correct_option
+    await call.answer("✅ جواب درست ثبت شد", show_alert=False)
     if len(game.answered[idx]) >= len(game.lobby.players):
         await resolve_group_duel_question(bot, db, game, idx)
 
@@ -1170,8 +1251,16 @@ async def group_report_menu(call: CallbackQuery, bot: Bot) -> None:
         lines = ["📋 سوالات و جواب‌های این بازی"]
         for i, q in enumerate(game.questions, 1):
             opts = [q['option1'], q['option2'], q['option3'], q['option4']]
-            correct = opts[int(q['correct_option']) - 1]
-            lines.append(f"\n{i}. {q['text']}\n✅ جواب: {correct}")
+            correct_idx = int(q['correct_option'])
+            correct_text = opts[correct_idx - 1]
+            selected = game.answered.get(i - 1, {}).get(call.from_user.id)
+            if selected:
+                selected_text = opts[int(selected) - 1]
+                mark = "✅" if int(selected) == correct_idx else "❌"
+                answer_line = f"✅ جواب صحیح {correct_text}\n{mark} پاسخ تو {selected_text}"
+            else:
+                answer_line = f"✅ جواب صحیح {correct_text}\n⏱ پاسخ تو بدون پاسخ"
+            lines.append(f"\n{i}. {q['text']}\n{answer_line}")
         lines.append("\nبرای گزارش مشکل شماره سوال رو از دکمه‌های زیر انتخاب کن")
         await bot.send_message(
             call.from_user.id,

@@ -33,8 +33,6 @@ runtimes: dict[int, DuelRuntime] = {}
 user_genre_temp: dict[tuple[int, int], set[str]] = {}
 user_offer_temp: dict[tuple[int, int], list[str]] = {}
 hidden_options_temp: dict[tuple[int, int, int], set[int]] = {}
-second_chance_pending: set[tuple[int, int, int]] = set()
-second_chance_question: dict[tuple[int, int], int] = {}
 question_message_ids: dict[tuple[int, int, int], int] = {}
 duel_main_message_ids: dict[tuple[int, int], int] = {}
 rematch_timeout_tasks: dict[tuple[int, int], asyncio.Task] = {}
@@ -371,7 +369,11 @@ async def send_current_question(duel_id: int, db: Database, bot: Bot) -> None:
         p2 = await db.get_user(duel['player2_id'])
         p1_name = (p1['first_name'] or p1['username'] or str(duel['player1_id'])) if p1 else str(duel['player1_id'])
         p2_name = BOT_OPPONENT_NAME if duel['opponent_type'] == 'bot' else ((p2['first_name'] or p2['username'] or str(duel['player2_id'])) if p2 else str(duel['player2_id']))
-        text = f"⚔️ {p1_name} vs {p2_name}\n\nسوال {seq + 1}\nID: <code>{q['id']}</code>\n\n{q['text']}"
+        total_questions = await db.duel_questions_count(duel_id)
+        p1_marks = await db.duel_progress_marks(duel_id, duel['player1_id'], total_questions)
+        p2_marks = await db.duel_progress_marks(duel_id, duel['player2_id'], total_questions)
+        progress_lines = f"\u200f{p1_name}\n\u200e{p1_marks}\n\n\u200f{p2_name}\n\u200e{p2_marks}"
+        text = f"⚔️ {p1_name} vs {p2_name}\n\nسوال {seq + 1} از {total_questions}\n\n{q['text']}\n\n{progress_lines}"
         for uid in [duel['player1_id'], duel['player2_id']]:
             if not is_real_user(uid):
                 continue
@@ -482,6 +484,14 @@ async def edit_duel_question_results(duel_id: int, qid: int, db: Database, bot: 
         opts = options_from_question(q)
         correct_text = opts[int(q['correct_option']) - 1]
         seq = int(duel['current_index']) + 1
+        total_questions = await db.duel_questions_count(duel_id)
+        p1 = await db.get_user(duel['player1_id'])
+        p2 = await db.get_user(duel['player2_id'])
+        p1_name = (p1['first_name'] or p1['username'] or str(duel['player1_id'])) if p1 else str(duel['player1_id'])
+        p2_name = BOT_OPPONENT_NAME if duel['opponent_type'] == 'bot' else ((p2['first_name'] or p2['username'] or str(duel['player2_id'])) if p2 else str(duel['player2_id']))
+        p1_marks = await db.duel_progress_marks(duel_id, duel['player1_id'], total_questions)
+        p2_marks = await db.duel_progress_marks(duel_id, duel['player2_id'], total_questions)
+        progress_lines = f"\u200f{p1_name}\n\u200e{p1_marks}\n\n\u200f{p2_name}\n\u200e{p2_marks}"
         for uid in [duel['player1_id'], duel['player2_id']]:
             if not is_real_user(uid):
                 continue
@@ -491,7 +501,7 @@ async def edit_duel_question_results(duel_id: int, qid: int, db: Database, bot: 
                 status = "✅ درست" if ans['is_correct'] else f"❌ اشتباه\nپاسخ شما: {selected_text}\nجواب درست: {correct_text} ✅"
             else:
                 status = f"⏱ بدون پاسخ\nجواب درست: {correct_text} ✅"
-            text = f"سوال {seq}\nID: <code>{qid}</code>\n\n{q['text']}\n\n{status}"
+            text = f"سوال {seq} از {total_questions}\n\n{q['text']}\n\n{status}\n\n{progress_lines}"
             mid = question_message_ids.get((duel_id, uid, qid)) or duel_main_message_ids.get((duel_id, uid))
             try:
                 if mid:
@@ -547,9 +557,6 @@ async def answer_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
             return
         rt = runtime(duel_id)
         ms = int((time.monotonic() - rt.question_started_at) * 1000)
-        pending_key = (duel_id, call.from_user.id, qid)
-        correct_text = options_from_question(q)[q['correct_option'] - 1]
-        explanation = f"\n\n{q['explanation']}" if 'explanation' in q.keys() and q['explanation'] else ""
         attempt = 1
         score = 1.0 if opt == q['correct_option'] else 0.0
         inserted = await db.record_answer(duel_id, qid, call.from_user.id, opt, q['correct_option'], ms, answer_score=score, attempt=attempt, bot=bot)
@@ -557,7 +564,6 @@ async def answer_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
             await call.answer("قبلاً جواب دادی", show_alert=True)
             return
         unanswered_streaks[(duel_id, call.from_user.id)] = 0
-        second_chance_pending.discard(pending_key)
         is_correct = opt == int(q['correct_option'])
         if is_correct:
             bonus = 0
@@ -658,12 +664,6 @@ async def finish_and_notify(duel_id: int, db: Database, bot: Bot) -> None:
     for key in list(hidden_options_temp.keys()):
         if key[0] == duel_id:
             hidden_options_temp.pop(key, None)
-    for key in list(second_chance_pending):
-        if key[0] == duel_id:
-            second_chance_pending.discard(key)
-    for key in list(second_chance_question.keys()):
-        if key[0] == duel_id:
-            second_chance_question.pop(key, None)
     for key in list(question_message_ids.keys()):
         if key[0] == duel_id:
             question_message_ids.pop(key, None)
@@ -678,36 +678,35 @@ async def finish_and_notify(duel_id: int, db: Database, bot: Bot) -> None:
 
 @router.callback_query(F.data.startswith("power:"))
 async def powerup_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
-    await call.answer()
     try:
         _, ptype, duel_s, qid_s = call.data.split(":")
         duel_id, qid = int(duel_s), int(qid_s)
         if ptype not in {'remove2', 'auto'}:
-            await call.message.answer("این پاورآپ دیگه فعال نیست")
+            await call.answer("این پاورآپ دیگه فعال نیست", show_alert=True)
             return
         costs = await db.powerup_costs_for_user(duel_id, call.from_user.id)
         cost = costs['remove2'] if ptype == 'remove2' else costs['auto']
         if cost < 0:
-            await call.message.answer("❌ سقف استفاده از این پاورآپ تو این دوئل پر شده")
+            await call.answer("❌ سقف استفاده از این پاورآپ تو این دوئل پر شده", show_alert=True)
             return
         user = await db.get_user(call.from_user.id)
         q = await db.fetchone("SELECT * FROM questions WHERE id=?", (qid,))
         duel = await db.get_duel(duel_id)
         if not user or not q or not duel:
-            await call.message.answer("پاورآپ نامعتبره")
+            await call.answer("پاورآپ نامعتبره", show_alert=True)
             return
         if await db.has_answered(duel_id, qid, call.from_user.id):
-            await call.message.answer("بعد از پاسخ دادن نمی‌تونی پاورآپ فعال کنی")
+            await call.answer("بعد از پاسخ دادن نمی‌تونی پاورآپ فعال کنی", show_alert=True)
             return
         if user['coins'] < cost:
-            await call.message.answer(f"سکه کافی نداری، هزینه فعلی {cost} سکه")
+            await call.answer(f"سکه کافی نداری، هزینه فعلی {cost} سکه", show_alert=True)
             return
         if await db.has_powerup(duel_id, qid, call.from_user.id, ptype):
-            await call.message.answer("این پاورآپ رو برای این سوال قبلاً استفاده کردی")
+            await call.answer("این پاورآپ رو برای این سوال قبلاً استفاده کردی", show_alert=True)
             return
         ok = await db.mark_powerup(duel_id, qid, call.from_user.id, ptype)
         if not ok:
-            await call.message.answer("امکان استفاده از این پاورآپ نیست")
+            await call.answer("امکان استفاده از این پاورآپ نیست", show_alert=True)
             return
         await db.change_coins(call.from_user.id, -cost, f"powerup_{ptype}", duel_id)
         if ptype == 'remove2':
@@ -717,30 +716,29 @@ async def powerup_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
             new_costs = await db.powerup_costs_for_user(duel_id, call.from_user.id)
             markup = question_keyboard(duel_id, qid, options_from_question(q), hidden, cost_remove2=-1, cost_auto=new_costs['auto'])
             asyncio.create_task(safe_edit_reply_markup(call.message, markup))
-            await call.message.answer(f"✅ خرید موفق\n🪙 {cost} سکه کسر شد\n🔪 دو گزینه حذف شد")
+            await call.answer(f"✅ خرید موفق\n🪙 {cost} سکه کسر شد\n🔪 دو گزینه حذف شد", show_alert=True)
             return
         rt = runtime(duel_id)
         ms = int((time.monotonic() - rt.question_started_at) * 1000)
         correct_option = int(q['correct_option'])
         inserted = await db.record_answer(duel_id, qid, call.from_user.id, correct_option, correct_option, ms, answer_score=1.0, attempt=1, bot=bot)
         if not inserted:
-            await call.message.answer("قبلاً جواب دادی")
+            await call.answer("قبلاً جواب دادی", show_alert=True)
             return
         unanswered_streaks[(duel_id, call.from_user.id)] = 0
-        base_result_text = f"سوال {duel['current_index'] + 1}\nID: <code>{qid}</code>\n\n{q['text']}"
-        result_text = f"{base_result_text}\n\n✅ پاورآپ جواب خودکار فعال شد\nجواب درست {options_from_question(q)[correct_option - 1]} ✅"
-        try:
-            await call.message.edit_text(result_text)
-        except Exception:
-            await call.message.answer(result_text)
         if await db.answered_count_for_question(duel_id, qid) >= 2:
-            rt.timeout_task.cancel() if rt.timeout_task and not rt.timeout_task.done() else None
-            await asyncio.sleep(1.0)
-            await advance_duel(duel_id, db, bot, qid)
+            if await try_claim_question_resolution(duel_id, qid):
+                if rt.timeout_task and not rt.timeout_task.done():
+                    rt.timeout_task.cancel()
+                await edit_duel_question_results(duel_id, qid, db, bot)
+                await asyncio.sleep(1.2)
+                await advance_duel(duel_id, db, bot, qid)
+        else:
+            await call.answer(f"✅ پاورآپ فعال شد، جواب درست ثبت شد", show_alert=False)
     except Exception:
         logger.exception("Powerup failed")
         try:
-            await call.message.answer("خطا در فعال‌سازی پاورآپ")
+            await call.answer("خطا در فعال‌سازی پاورآپ", show_alert=True)
         except Exception:
             logger.exception("Powerup error notify failed")
 

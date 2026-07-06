@@ -14,6 +14,7 @@ from app.keyboards import (
     discount_kind_keyboard, question_manage_keyboard, question_genres_keyboard, pending_questions_keyboard,
     invalid_questions_confirm_keyboard, review_question_keyboard, question_admin_actions_keyboard, question_search_results_keyboard, genre_edit_keyboard,
     titles_menu_keyboard, animation_preview_keyboard, admin_submenu_keyboard, broadcast_confirm_keyboard,
+    user_search_results_keyboard,
 )
 from app.states import AdminFlow, BulkQuestionImport, ShopPackageFlow, LeagueFlow, DiscountFlow, QuestionCleanupFlow, QuestionEditFlow, TitleFlow
 from app.bulk_questions import parse_bulk_questions, format_bulk_report, bulk_help_text, extract_json_text, is_json_balanced, looks_like_json, looks_like_bulk_text
@@ -864,14 +865,41 @@ async def user_command(message: Message, db: Database) -> None:
     try:
         if not await require_admin_message(message, db):
             return
-        parts = (message.text or "").split()
-        if len(parts) != 2 or not parts[1].isdigit():
-            await message.answer("فرمت درست: /user USER_ID")
+        parts = (message.text or "").split(maxsplit=1)
+        if len(parts) != 2 or not parts[1].strip():
+            await message.answer("فرمت درست: /user USER_ID یا /user بخشی از یوزرنیم/اسم")
             return
-        await send_user_profile_admin(message, db, int(parts[1]))
+        query = parts[1].strip()
+        if query.isdigit():
+            await send_user_profile_admin(message, db, int(query))
+            return
+        results = await db.search_users_by_name(query)
+        if not results:
+            await message.answer("کاربری با این مشخصات پیدا نشد.")
+            return
+        if len(results) == 1:
+            await send_user_profile_admin(message, db, int(results[0]['telegram_id']))
+            return
+        await message.answer(
+            f"{len(results)} کاربر پیدا شد، یکی رو انتخاب کن:",
+            reply_markup=user_search_results_keyboard(results),
+        )
     except Exception:
         logger.exception("User command failed")
         await message.answer("خطا در جستجوی کاربر.")
+
+
+@router.callback_query(F.data.startswith("uview:"))
+async def user_view_from_search(call: CallbackQuery, db: Database) -> None:
+    try:
+        if not await require_admin_call(call, db):
+            return
+        tg_id = int(call.data.split(":")[1])
+        await send_user_profile_admin(call.message, db, tg_id)
+        await call.answer()
+    except Exception:
+        logger.exception("User view from search failed")
+        await call.answer("خطا", show_alert=True)
 
 
 @router.message(AdminFlow.waiting_user_id, F.text)

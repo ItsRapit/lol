@@ -164,6 +164,15 @@ def settings_keyboard(settings) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
+def user_search_results_keyboard(results) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for u in results:
+        label = f"@{u['username']}" if u['username'] else (u['first_name'] or str(u['telegram_id']))
+        b.button(text=f"{label} ({u['telegram_id']})", callback_data=f"uview:{u['telegram_id']}")
+    b.adjust(1)
+    return b.as_markup()
+
+
 def user_admin_keyboard(tg_id: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="تغییر سکه", callback_data=f"ucoin:{tg_id}")
@@ -491,6 +500,8 @@ SETTING_LABELS = {
     "bot_duel_win_coins": "سکه برد دوئل ربات",
     "bot_duel_win_xp": "ایکس‌پی برد دوئل ربات",
     "weekly_reward_coins": "سکه هدیه بازگشت کاربر غیرفعال",
+    "group_auto_answer_cost": "هزینه جواب خودکار (بازی گروهی/اینلاین)",
+    "group_auto_answer_max_uses": "سقف استفاده جواب خودکار (بازی گروهی/اینلاین)",
     "initial_signup_coins": "سکه شروع ثبت‌نام",
     "question_approval_reward_coins": "پاداش تایید سوال",
     "referral_referrer_coins": "رفرال دعوت‌کننده: سکه",
@@ -547,6 +558,7 @@ SETTING_CATEGORIES = {
         "winner_bonus_xp", "duel_draw_coin_reward", "initial_signup_coins",
         "question_approval_reward_coins", "bot_duel_xp_per_correct", "bot_duel_win_coins", "bot_duel_win_xp",
         "weekly_reward_coins",
+        "group_auto_answer_cost", "group_auto_answer_max_uses",
     ]),
     "powerups": ("🔋 پاورآپ‌ها", [
         "powerup_remove2_cost", "powerup_auto_answer_cost", "powerup_max_uses_per_duel",

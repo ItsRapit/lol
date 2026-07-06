@@ -449,6 +449,8 @@ class Database:
             "bot_duel_win_coins": ("5", "Coins for winning a bot duel"),
             "bot_duel_win_xp": ("10", "XP for winning a bot duel"),
             "rematch_cost": ("2", "Coins charged to each player when a rematch is accepted"),
+            "group_auto_answer_cost": ("10", "Fixed coin cost for auto-answer powerup in inline group games"),
+            "group_auto_answer_max_uses": ("3", "Max uses of auto-answer powerup per player per inline group game"),
             "matchmaking_timeout_seconds": ("120", "Random matchmaking timeout seconds"),
             "maintenance_mode": ("0", "1 disables bot for non-admin users"),
             "maintenance_text": ("بات موقتاً در حال تعمیر است. لطفاً بعداً دوباره تلاش کنید.", "Shown during maintenance"),
@@ -746,6 +748,18 @@ class Database:
 
     async def get_user(self, tg_id: int) -> aiosqlite.Row | None:
         return await self.fetchone("SELECT * FROM users WHERE telegram_id=?", (tg_id,))
+
+    async def search_users_by_name(self, query: str, limit: int = 10) -> list[aiosqlite.Row]:
+        """Fuzzy search by partial username or first name (case-insensitive), most recently active first."""
+        q = query.lstrip("@").strip()
+        like = f"%{q}%"
+        return await self.fetchall(
+            """SELECT * FROM users
+               WHERE username LIKE ? COLLATE NOCASE OR first_name LIKE ? COLLATE NOCASE
+               ORDER BY (username LIKE ? COLLATE NOCASE) DESC, updated_at DESC
+               LIMIT ?""",
+            (like, like, f"{q}%", limit),
+        )
 
     async def change_coins(self, tg_id: int, amount: int, reason: str, duel_id: int | None = None) -> None:
         await self.execute_write("UPDATE users SET coins=MAX(0, coins + ?), updated_at=? WHERE telegram_id=?", (amount, now_iso(), tg_id))
@@ -1069,6 +1083,24 @@ class Database:
     async def duel_questions_count(self, duel_id: int) -> int:
         row = await self.fetchone("SELECT COUNT(*) c FROM duel_questions WHERE duel_id=?", (duel_id,))
         return int(row["c"] if row else 0)
+
+    async def duel_progress_marks(self, duel_id: int, user_id: int, total_questions: int) -> str:
+        """Builds a per-question progress string (✅/❌/⬜) for one player across the whole duel, ordered by question sequence."""
+        rows = await self.fetchall(
+            """SELECT dq.seq, da.is_correct FROM duel_questions dq
+               LEFT JOIN duel_answers da ON da.duel_id=dq.duel_id AND da.question_id=dq.question_id AND da.user_id=?
+               WHERE dq.duel_id=? ORDER BY dq.seq ASC""",
+            (user_id, duel_id),
+        )
+        marks = []
+        for r in rows:
+            if r["is_correct"] is None:
+                marks.append("⬜")
+            else:
+                marks.append("✅" if int(r["is_correct"]) else "❌")
+        while len(marks) < total_questions:
+            marks.append("⬜")
+        return "".join(marks)
 
     async def record_answer(self, duel_id: int, qid: int, user_id: int, selected: int | None, correct_option: int, response_ms: int | None, answer_score: float | None = None, attempt: int = 1, bot: Any = None) -> bool:
         is_correct = int(selected == correct_option) if selected is not None else 0
