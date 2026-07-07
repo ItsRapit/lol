@@ -935,13 +935,16 @@ async def finish_group_game(bot: Bot, db: Database, game: GroupGame) -> None:
     lines = []
     levelups: list[tuple[int, str, int, int, str]] = []
     for pos, (uid, name) in enumerate(sorted_players, 1):
-        score = game.scores.get(uid, 0)
-        xp = 20 if score == max_score and score > 0 else score * 5
         old_user = await db.get_user(uid)
         if not old_user:
-            await db.upsert_user(uid, game.lobby.usernames.get(uid), name)
-            old_user = await db.get_user(uid)
-        old_level = int(old_user['level']) if old_user else 1
+            # Shouldn't normally happen: join_lobby requires the user to have started the bot already.
+            # Skip rather than silently registering someone who never opened the PV chat, to avoid
+            # them being wrongly flagged as "blocked" later when we can't message them.
+            logger.warning("Skipping unregistered user=%s in group game results", uid)
+            continue
+        score = game.scores.get(uid, 0)
+        xp = 20 if score == max_score and score > 0 else score * 5
+        old_level = int(old_user['level'])
         if xp:
             await db.change_xp(uid, xp, "group_quiz")
             await db.sync_user_title(uid)

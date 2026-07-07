@@ -379,6 +379,7 @@ class Database:
         await self.add_column_if_missing("duels", "opponent_type", "opponent_type TEXT NOT NULL DEFAULT 'human'")
         await self.add_column_if_missing("duels", "bot_level", "bot_level INTEGER")
         await self.add_column_if_missing("user_daily_quests", "near_complete_notified", "near_complete_notified INTEGER NOT NULL DEFAULT 0")
+        await self.add_column_if_missing("users", "started_pv", "started_pv INTEGER NOT NULL DEFAULT 0")
         await self.execute_write("UPDATE shop_packages SET package_type=CASE WHEN xp>0 AND coins=0 THEN 'xp' ELSE 'coins' END WHERE package_type IS NULL OR package_type='' OR package_type='coins'")
         for pkg in await self.fetchall("SELECT id,price_label FROM shop_packages WHERE price_amount=0"):
             amount = self.parse_price_amount(pkg["price_label"])
@@ -628,7 +629,7 @@ class Database:
     async def users_with_incomplete_quests_today(self) -> list[aiosqlite.Row]:
         date_key = tehran_date_key()
         return await self.fetchall(
-            """SELECT DISTINCT u.telegram_id, u.first_name, u.username
+            """SELECT DISTINCT u.telegram_id, u.first_name, u.username, u.started_pv
                FROM user_daily_quests udq JOIN users u ON u.telegram_id=udq.user_id
                WHERE udq.date=? AND udq.completed=0 AND u.is_blocked=0""",
             (date_key,),
@@ -646,7 +647,7 @@ class Database:
     async def inactive_users_for_gift(self, days: int = 7) -> list[aiosqlite.Row]:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         return await self.fetchall(
-            """SELECT telegram_id, first_name, username FROM users
+            """SELECT telegram_id, first_name, username, started_pv FROM users
                WHERE is_blocked=0
                AND (last_duel_at IS NULL OR last_duel_at < ?)
                AND created_at < ?
@@ -739,14 +740,17 @@ class Database:
             rendered = text
         return rendered.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789"))
 
-    async def upsert_user(self, tg_id: int, username: str | None, first_name: str | None, referred_by_tg: int | None = None) -> aiosqlite.Row:
+    async def upsert_user(self, tg_id: int, username: str | None, first_name: str | None, referred_by_tg: int | None = None, from_pv: bool = False) -> aiosqlite.Row:
         ts = now_iso()
+        exists = await self.get_user(tg_id)
         await self.execute_write(
-            """INSERT INTO users(telegram_id,username,first_name,created_at,updated_at)
-               VALUES(?,?,?,?,?)
+            """INSERT INTO users(telegram_id,username,first_name,created_at,updated_at,started_pv)
+               VALUES(?,?,?,?,?,?)
                ON CONFLICT(telegram_id) DO UPDATE SET username=excluded.username, first_name=excluded.first_name, updated_at=excluded.updated_at""",
-            (tg_id, username, first_name, ts, ts),
+            (tg_id, username, first_name, ts, ts, 1 if from_pv else 0),
         )
+        if from_pv and exists and not exists["started_pv"]:
+            await self.execute_write("UPDATE users SET started_pv=1, is_blocked=0 WHERE telegram_id=?", (tg_id,))
         user = await self.get_user(tg_id)
         if user and referred_by_tg and referred_by_tg != tg_id and not user["referred_by"]:
             ref = await self.get_user(referred_by_tg)

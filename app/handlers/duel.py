@@ -84,7 +84,7 @@ async def try_claim_question_resolution(duel_id: int, qid: int) -> bool:
 
 @router.message(F.text == "⚔️ دوئل")
 async def duel_entry(message: Message, db: Database) -> None:
-    u = await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    u = await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name, from_pv=True)
     if u['is_blocked']:
         await message.answer("حسابت مسدوده")
         return

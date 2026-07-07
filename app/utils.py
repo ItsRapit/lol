@@ -62,7 +62,7 @@ async def ensure_user(db: Database, user: User, start_payload: str | None = None
             referrer = int(start_payload.removeprefix('ref_'))
         except ValueError:
             referrer = None
-    return await db.upsert_user(user.id, user.username, user.first_name, referrer)
+    return await db.upsert_user(user.id, user.username, user.first_name, referrer, from_pv=True)
 
 
 def xp_progress_text(xp: int, current_level_required: int = 0, next_level_required: int = 100) -> str:

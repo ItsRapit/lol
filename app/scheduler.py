@@ -38,7 +38,8 @@ async def send_daily_quest_reminders(bot: Bot, db: Database) -> None:
                     text = random.choice(QUEST_REMINDER_LINES).format(n=3)
                 await bot.send_message(u["telegram_id"], text)
             except TelegramForbiddenError:
-                await db.execute_write("UPDATE users SET is_blocked=1 WHERE telegram_id=?", (u["telegram_id"],))
+                if u["started_pv"]:
+                    await db.execute_write("UPDATE users SET is_blocked=1 WHERE telegram_id=?", (u["telegram_id"],))
             except TelegramBadRequest:
                 continue
             except Exception:
@@ -58,7 +59,8 @@ async def send_inactive_user_gifts(bot: Bot, db: Database) -> None:
                 text = random.choice(INACTIVE_GIFT_LINES).format(coins=coins)
                 await bot.send_message(u["telegram_id"], text)
             except TelegramForbiddenError:
-                await db.execute_write("UPDATE users SET is_blocked=1 WHERE telegram_id=?", (u["telegram_id"],))
+                if u["started_pv"]:
+                    await db.execute_write("UPDATE users SET is_blocked=1 WHERE telegram_id=?", (u["telegram_id"],))
             except TelegramBadRequest:
                 continue
             except Exception:

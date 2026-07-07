@@ -126,7 +126,7 @@ async def nav_home(call: CallbackQuery, state: FSMContext, db: Database) -> None
 @router.message(F.text == "👤 پروفایل")
 async def profile(message: Message, db: Database) -> None:
     try:
-        await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+        await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name, from_pv=True)
         await message.answer(await build_profile_text(db, message.from_user.id))
     except Exception:
         logger.exception("Profile failed")
@@ -206,7 +206,7 @@ async def leaderboard_callback(call: CallbackQuery, db: Database) -> None:
 
 @router.message(F.text == "🎁 رفرال")
 async def referral(message: Message, db: Database, bot_username: str) -> None:
-    await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name, from_pv=True)
     link = f"https://t.me/{bot_username}?start=ref_{message.from_user.id}"
     rc = await db.get_int("referral_referrer_coins", 50)
     rx = await db.get_int("referral_referrer_xp", 50)
@@ -221,7 +221,7 @@ async def referral(message: Message, db: Database, bot_username: str) -> None:
 
 @router.message(F.text == "🎯 کوئست روزانه")
 async def daily_quests(message: Message, db: Database) -> None:
-    u = await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    u = await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name, from_pv=True)
     if u['is_blocked']:
         await message.answer("حساب شما مسدود است")
         return
