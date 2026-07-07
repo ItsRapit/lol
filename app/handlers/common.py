@@ -3,7 +3,7 @@ from aiogram import Router, F, Bot
 from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
-from app.db import Database
+from app.db import Database, now_iso
 from app.keyboards import main_menu, leaderboard_basis_keyboard, leaderboard_period_keyboard, CANCEL_TEXT, back_home_keyboard, quests_keyboard
 from app.utils import ensure_user, xp_progress_text, rtl_line, to_english_digits, league_with_emoji, rank_with_emoji
 from app.notifications import send_streak_notification
@@ -94,6 +94,19 @@ async def help_command(message: Message, db: Database) -> None:
 @router.message(F.text == CANCEL_TEXT)
 async def cancel(message: Message, state: FSMContext, db: Database) -> None:
     await state.clear()
+    try:
+        from app.handlers.duel import queue_timeout_tasks
+        duel = await db.active_duel_for_user(message.from_user.id)
+        if duel and duel['status'] == 'waiting' and duel['player1_id'] == message.from_user.id:
+            task = queue_timeout_tasks.pop(duel['id'], None)
+            if task and not task.done():
+                task.cancel()
+            cost = await db.get_int('random_duel_cost', 5)
+            await db.execute_write("UPDATE duels SET status='cancelled', finished_at=? WHERE id=?", (now_iso(), duel['id']))
+            await db.change_coins(message.from_user.id, cost, 'random_duel_queue_cancel_refund', duel['id'])
+            await message.answer(f"از صف خارج شدی و {cost} سکه به حسابت برگشت")
+    except Exception:
+        logger.exception("Cancel active queue on /cancel failed")
     is_admin = await db.is_admin(message.from_user.id)
     await message.answer("منوی اصلی", reply_markup=main_menu(is_admin))
 

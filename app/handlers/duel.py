@@ -866,10 +866,10 @@ async def opponent_profile_callback(call: CallbackQuery, db: Database) -> None:
         await call.message.answer("خطا در نمایش پروفایل حریف")
 
 
-async def rematch_timeout(requester_id: int, opponent_id: int, opponent_chat_id: int, opponent_message_id: int, bot: Bot) -> None:
+async def rematch_timeout(duel_id: int, requester_id: int, opponent_id: int, opponent_chat_id: int, opponent_message_id: int, bot: Bot) -> None:
     try:
         await asyncio.sleep(60)
-        key = (requester_id, opponent_id)
+        key = (duel_id, opponent_id)
         task = rematch_timeout_tasks.pop(key, None)
         if task:
             try:
@@ -890,21 +890,22 @@ async def rematch_timeout(requester_id: int, opponent_id: int, opponent_chat_id:
 @router.callback_query(F.data.startswith("rematch_request:"))
 async def rematch_request_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
     try:
-        opponent_id = int(call.data.split(":")[1])
-        key = (call.from_user.id, opponent_id)
+        _, opponent_id_s, duel_id_s = call.data.split(":")
+        opponent_id, duel_id = int(opponent_id_s), int(duel_id_s)
+        key = (duel_id, opponent_id)
         if key in rematch_sent_pairs:
-            await call.answer("بیشتر از یک درخواست نمی‌تونی ارسال کنی", show_alert=True)
+            await call.answer("برای این بازی قبلاً درخواست فرستادی", show_alert=True)
             return
         active = await db.active_duel_for_user(call.from_user.id)
         if active:
             await call.answer("خودت الان وسط یه بازی دیگه‌ای", show_alert=True)
             return
         rematch_sent_pairs.add(key)
-        sent = await bot.send_message(opponent_id, "حریفت درخواست بازی مجدد فرستاده", reply_markup=rematch_keyboard(call.from_user.id))
+        sent = await bot.send_message(opponent_id, "حریفت درخواست بازی مجدد فرستاده", reply_markup=rematch_keyboard(call.from_user.id, duel_id))
         old = rematch_timeout_tasks.pop(key, None)
         if old and not old.done():
             old.cancel()
-        rematch_timeout_tasks[key] = asyncio.create_task(rematch_timeout(call.from_user.id, opponent_id, sent.chat.id, sent.message_id, bot))
+        rematch_timeout_tasks[key] = asyncio.create_task(rematch_timeout(duel_id, call.from_user.id, opponent_id, sent.chat.id, sent.message_id, bot))
         await call.answer("درخواست ارسال شد", show_alert=False)
     except Exception:
         logger.exception("Rematch request failed")
@@ -914,8 +915,9 @@ async def rematch_request_callback(call: CallbackQuery, db: Database, bot: Bot) 
 @router.callback_query(F.data.startswith("rematch_decline:"))
 async def rematch_decline_callback(call: CallbackQuery, bot: Bot) -> None:
     try:
-        requester_id = int(call.data.split(":")[1])
-        key = (requester_id, call.from_user.id)
+        _, requester_id_s, duel_id_s = call.data.split(":")
+        requester_id, duel_id = int(requester_id_s), int(duel_id_s)
+        key = (duel_id, call.from_user.id)
         task = rematch_timeout_tasks.pop(key, None)
         if task and not task.done():
             task.cancel()
@@ -932,8 +934,9 @@ async def rematch_decline_callback(call: CallbackQuery, bot: Bot) -> None:
 @router.callback_query(F.data.startswith("rematch_accept:"))
 async def rematch_accept_callback(call: CallbackQuery, db: Database, bot: Bot) -> None:
     try:
-        requester_id = int(call.data.split(":")[1])
-        key = (requester_id, call.from_user.id)
+        _, requester_id_s, duel_id_s = call.data.split(":")
+        requester_id, duel_id = int(requester_id_s), int(duel_id_s)
+        key = (duel_id, call.from_user.id)
         task = rematch_timeout_tasks.pop(key, None)
         if task and not task.done():
             task.cancel()
@@ -960,7 +963,7 @@ async def rematch_accept_callback(call: CallbackQuery, db: Database, bot: Bot) -
         if cost:
             await db.change_coins(requester_id, -cost, "rematch_entry")
             await db.change_coins(call.from_user.id, -cost, "rematch_entry")
-        token = invite_token()
+        token = f"rematch_{invite_token()}"
         duel_id = await db.create_invite_duel(requester_id, token)
         await db.join_duel(duel_id, call.from_user.id)
         await bot.send_message(requester_id, "✅ حریف درخواست بازی مجدد رو قبول کرد، انتخاب ژانر شروع شد")

@@ -378,6 +378,7 @@ class Database:
         await self.add_column_if_missing("users", "last_quest_notify_at", "last_quest_notify_at TEXT")
         await self.add_column_if_missing("duels", "opponent_type", "opponent_type TEXT NOT NULL DEFAULT 'human'")
         await self.add_column_if_missing("duels", "bot_level", "bot_level INTEGER")
+        await self.add_column_if_missing("user_daily_quests", "near_complete_notified", "near_complete_notified INTEGER NOT NULL DEFAULT 0")
         await self.execute_write("UPDATE shop_packages SET package_type=CASE WHEN xp>0 AND coins=0 THEN 'xp' ELSE 'coins' END WHERE package_type IS NULL OR package_type='' OR package_type='coins'")
         for pkg in await self.fetchall("SELECT id,price_label FROM shop_packages WHERE price_amount=0"):
             amount = self.parse_price_amount(pkg["price_label"])
@@ -556,23 +557,31 @@ class Database:
         """Advances progress on any of today's active quests matching goal_type. Returns quests that just completed."""
         date_key = tehran_date_key()
         rows = await self.fetchall(
-            """SELECT udq.* FROM user_daily_quests udq JOIN quest_templates qt ON qt.id=udq.quest_template_id
+            """SELECT udq.*, qt.title FROM user_daily_quests udq JOIN quest_templates qt ON qt.id=udq.quest_template_id
                WHERE udq.user_id=? AND udq.date=? AND qt.goal_type=? AND udq.completed=0""",
             (user_id, date_key, goal_type),
         )
         just_completed = []
+        near_complete = []
         for r in rows:
             new_progress = min(int(r["progress"]) + amount, int(r["goal_count"]))
             completed = 1 if new_progress >= int(r["goal_count"]) else 0
             await self.execute_write("UPDATE user_daily_quests SET progress=?, completed=? WHERE id=?", (new_progress, completed, r["id"]))
             if completed:
                 just_completed.append(r)
-        if just_completed and bot is not None:
+            elif not r["near_complete_notified"] and new_progress >= int(r["goal_count"]) * 0.7:
+                await self.execute_write("UPDATE user_daily_quests SET near_complete_notified=1 WHERE id=?", (r["id"],))
+                near_complete.append({"title": r["title"], "progress": new_progress, "goal_count": int(r["goal_count"])})
+        if bot is not None:
             try:
-                from app.notifications import send_quest_completed_notifications
-                await send_quest_completed_notifications(bot, user_id, just_completed)
+                if just_completed:
+                    from app.notifications import send_quest_completed_notifications
+                    await send_quest_completed_notifications(bot, user_id, just_completed)
+                if near_complete:
+                    from app.notifications import send_quest_near_complete_notifications
+                    await send_quest_near_complete_notifications(bot, user_id, near_complete)
             except Exception:
-                logger.exception("Quest completion notify failed for user=%s", user_id)
+                logger.exception("Quest notify failed for user=%s", user_id)
         return just_completed
 
     async def claim_quest_reward(self, user_id: int, quest_id: int) -> dict[str, Any] | None:
@@ -744,6 +753,8 @@ class Database:
             if ref:
                 await self.execute_write("UPDATE users SET referred_by=? WHERE telegram_id=?", (referred_by_tg, tg_id))
                 await self.execute_write("INSERT OR IGNORE INTO referrals(referrer_id,referred_id,created_at) VALUES(?,?,?)", (referred_by_tg, tg_id, ts))
+        if tg_id != self.BOT_OPPONENT_ID:
+            await self.get_today_quests(tg_id)
         return await self.get_user(tg_id)  # type: ignore[return-value]
 
     async def get_user(self, tg_id: int) -> aiosqlite.Row | None:
@@ -1180,7 +1191,8 @@ class Database:
             winner = p2
         await self.execute_write("UPDATE duels SET status='finished', finished_at=?, winner_id=? WHERE id=?", (now_iso(), winner, duel_id))
         is_bot_duel = duel["opponent_type"] == "bot"
-        is_random_duel = not is_bot_duel and not bool(duel["invite_token"])
+        is_rematch_duel = bool(duel["invite_token"]) and str(duel["invite_token"]).startswith("rematch_")
+        is_random_duel = not is_bot_duel and (not bool(duel["invite_token"]) or is_rematch_duel)
         coin_per = await self.get_int("reward_coin_per_correct", 10)
         xp_per = await self.get_int("reward_xp_per_correct", 15)
         bonus = await self.get_int("winner_bonus_xp", 20)

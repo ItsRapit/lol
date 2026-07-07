@@ -469,15 +469,15 @@ def duel_finished_keyboard(duel_id: int, opponent_id: int, is_bot_opponent: bool
     b.button(text="📋 گزارش و جواب‌ها", callback_data=f"duel_report_answers:{duel_id}")
     if not is_bot_opponent:
         b.button(text="👤 دیدن پروفایل حریف", callback_data=f"opponent_profile:{opponent_id}")
-        b.button(text="🔁 درخواست بازی مجدد", callback_data=f"rematch_request:{opponent_id}")
+        b.button(text="🔁 درخواست بازی مجدد", callback_data=f"rematch_request:{opponent_id}:{duel_id}")
     b.adjust(1)
     return b.as_markup()
 
 
-def rematch_keyboard(requester_id: int) -> InlineKeyboardMarkup:
+def rematch_keyboard(requester_id: int, duel_id: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="✅ قبول", callback_data=f"rematch_accept:{requester_id}")
-    b.button(text="❌ رد", callback_data=f"rematch_decline:{requester_id}")
+    b.button(text="✅ قبول", callback_data=f"rematch_accept:{requester_id}:{duel_id}")
+    b.button(text="❌ رد", callback_data=f"rematch_decline:{requester_id}:{duel_id}")
     b.adjust(2)
     return b.as_markup()
 

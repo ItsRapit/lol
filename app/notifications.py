@@ -122,3 +122,14 @@ async def send_quest_completed_notifications(bot: Bot, user_id: int, just_comple
             await bot.send_message(user_id, "🎯 تکمیل شد\nیکی از کوئست‌های امروزت رو زدی، برو از بخش کوئست روزانه جایزه‌ات رو بردار")
     except Exception:
         logger.exception("Quest completed notification failed")
+
+
+async def send_quest_near_complete_notifications(bot: Bot, user_id: int, near_complete: list) -> None:
+    if not near_complete:
+        return
+    try:
+        for q in near_complete:
+            remaining = max(0, q["goal_count"] - q["progress"])
+            await bot.send_message(user_id, f"خوب پیش رفتی 👏\n«{q['title']}» فقط {remaining} تا مونده")
+    except Exception:
+        logger.exception("Quest near-complete notification failed")
