@@ -54,6 +54,23 @@ def runtime(duel_id: int) -> DuelRuntime:
     return runtimes[duel_id]
 
 
+def cancel_all_duel_runtime_tasks(duel_ids: list[int]) -> None:
+    """Cancels any pending in-memory timeout tasks for the given duels (used when force-closing duels, e.g. maintenance mode)."""
+    duel_id_set = set(duel_ids)
+    for duel_id in duel_id_set:
+        rt = runtimes.get(duel_id)
+        if rt and rt.timeout_task and not rt.timeout_task.done():
+            rt.timeout_task.cancel()
+        task = queue_timeout_tasks.pop(duel_id, None)
+        if task and not task.done():
+            task.cancel()
+    for key in list(genre_timeout_tasks.keys()):
+        if key[0] in duel_id_set:
+            task = genre_timeout_tasks.pop(key, None)
+            if task and not task.done():
+                task.cancel()
+
+
 async def try_claim_question_resolution(duel_id: int, qid: int) -> bool:
     """Returns True only for the first caller resolving this question; guards against
     the user-answer path and the bot-answer path both racing to finish the same question."""
@@ -949,7 +966,7 @@ async def rematch_accept_callback(call: CallbackQuery, db: Database, bot: Bot) -
             await call.answer("یکی از شما وسط یه بازی دیگه‌ست", show_alert=True)
             await call.message.edit_text("درخواست منقضی شد، یکی از دو طرف وسط یه بازی دیگه‌ست")
             return
-        cost = await db.get_int("rematch_cost", 2)
+        cost = await db.get_int("rematch_cost", 5)
         requester_user = await db.get_user(requester_id)
         opponent_user = await db.get_user(call.from_user.id)
         if not requester_user or requester_user["coins"] < cost:

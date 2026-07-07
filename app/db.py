@@ -449,7 +449,7 @@ class Database:
             "bot_duel_xp_per_correct": ("2", "XP for each correct answer in a bot duel"),
             "bot_duel_win_coins": ("5", "Coins for winning a bot duel"),
             "bot_duel_win_xp": ("10", "XP for winning a bot duel"),
-            "rematch_cost": ("2", "Coins charged to each player when a rematch is accepted"),
+            "rematch_cost": ("5", "Coins charged to each player when a rematch is accepted"),
             "group_auto_answer_cost": ("10", "Fixed coin cost for auto-answer powerup in inline group games"),
             "group_auto_answer_max_uses": ("3", "Max uses of auto-answer powerup per player per inline group game"),
             "matchmaking_timeout_seconds": ("120", "Random matchmaking timeout seconds"),
@@ -992,13 +992,19 @@ class Database:
         rows = await self.fetchall("SELECT * FROM duels WHERE status IN ('waiting','invite_waiting','genre_selection','playing')")
         random_cost = await self.get_int('random_duel_cost', 5)
         bot_cost = await self.get_int('bot_duel_cost', 3)
+        rematch_cost = await self.get_int('rematch_cost', 5)
         results: list[dict[str, Any]] = []
         for d in rows:
             refunds: dict[int, int] = {}
+            is_rematch = bool(d['invite_token']) and str(d['invite_token']).startswith('rematch_')
             if d['status'] == 'waiting':
                 refunds[d['player1_id']] = random_cost
+            elif is_rematch:
+                refunds[d['player1_id']] = rematch_cost
+                if d['player2_id'] and d['player2_id'] != self.BOT_OPPONENT_ID:
+                    refunds[d['player2_id']] = rematch_cost
             elif d['invite_token']:
-                pass  # rematch duels: no entry fee was charged, nothing to refund
+                pass  # plain invite-link duels: no entry fee was charged, nothing to refund
             elif d['opponent_type'] == 'bot':
                 refunds[d['player1_id']] = bot_cost
             else:
@@ -1009,6 +1015,11 @@ class Database:
             for uid, amount in refunds.items():
                 await self.change_coins(uid, amount, 'maintenance_duel_refund', d['id'])
             results.append({'duel_id': d['id'], 'refunds': refunds})
+        try:
+            from app.handlers.duel import cancel_all_duel_runtime_tasks
+            cancel_all_duel_runtime_tasks([d['id'] for d in rows])
+        except Exception:
+            logger.exception("Could not cancel in-memory duel timeout tasks during maintenance")
         return results
 
     async def available_genres(self) -> list[str]:

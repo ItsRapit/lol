@@ -82,6 +82,41 @@ async def bulk_command(message: Message, db: Database, state: FSMContext, bot: B
         await message.answer("خطا.")
 
 
+async def toggle_maintenance_mode(admin_id: int, db: Database, bot: Bot) -> str:
+    """Toggles maintenance mode, closing/refunding any live games when turning it on. Returns a summary text."""
+    cur = await db.get_int("maintenance_mode", 0)
+    new_val = "0" if cur else "1"
+    cancelled = []
+    closed_group_games = 0
+    if new_val == "1":
+        cancelled = await db.cancel_active_duels_with_refund()
+        for item in cancelled:
+            for uid, amount in item['refunds'].items():
+                try:
+                    await bot.send_message(uid, f"🛠 ربات وارد حالت تعمیر شد، دوئل/صف فعالت بسته شد و {amount} سکه به حسابت برگشت", reply_markup=main_menu(await db.is_admin(uid)))
+                except Exception:
+                    logger.exception("Could not notify maintenance refund user=%s", uid)
+        from app.handlers.group_quiz import close_all_games_for_maintenance
+        closed_group_games = await close_all_games_for_maintenance(bot)
+    await db.set_setting("maintenance_mode", new_val)
+    await db.log_admin(admin_id, "maintenance_toggle", details=f"{new_val}, cancelled={len(cancelled)}, group_games_closed={closed_group_games}")
+    summary = f"\n{len(cancelled)} دوئل/صف فعال بسته و refund شد" if new_val == "1" else ""
+    summary += f"\n{closed_group_games} بازی گروهی/اینلاین فعال هم بسته شد" if new_val == "1" and closed_group_games else ""
+    return "حالت تعمیر " + ("روشن شد." if new_val == "1" else "خاموش شد.") + summary
+
+
+@router.message(Command("maintenance"))
+async def maintenance_command(message: Message, db: Database, bot: Bot) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        summary_text = await toggle_maintenance_mode(message.from_user.id, db, bot)
+        await message.answer(summary_text)
+    except Exception:
+        logger.exception("Maintenance command failed")
+        await message.answer("خطا در تغییر حالت تعمیر.")
+
+
 @router.message(Command("backup"))
 async def backup_command(message: Message, db: Database) -> None:
     try:
@@ -671,20 +706,8 @@ async def admin_callback(call: CallbackQuery, db: Database, state: FSMContext, b
         elif action == 'leagues':
             await call.message.answer("مدیریت لیگ‌ها/تیرها (ساختار ثابت است؛ فقط اعداد و نام‌ها ویرایش می‌شوند):", reply_markup=admin_leagues_keyboard(await db.all_leagues()))
         elif action == 'maintenance_toggle':
-            cur = await db.get_int("maintenance_mode", 0)
-            new_val = "0" if cur else "1"
-            cancelled = []
-            if new_val == "1":
-                cancelled = await db.cancel_active_duels_with_refund()
-                for item in cancelled:
-                    for uid, amount in item['refunds'].items():
-                        try:
-                            await bot.send_message(uid, f"🛠 ربات وارد حالت تعمیر شد، دوئل/صف فعالت بسته شد و {amount} سکه به حسابت برگشت", reply_markup=main_menu(await db.is_admin(uid)))
-                        except Exception:
-                            logger.exception("Could not notify maintenance refund user=%s", uid)
-            await db.set_setting("maintenance_mode", new_val)
-            await db.log_admin(call.from_user.id, "maintenance_toggle", details=f"{new_val}, cancelled={len(cancelled)}")
-            await call.message.answer("حالت تعمیر " + ("روشن شد." if new_val == "1" else "خاموش شد.") + (f"\n{len(cancelled)} دوئل/صف فعال بسته و refund شد." if new_val == "1" else ""), reply_markup=admin_panel())
+            summary_text = await toggle_maintenance_mode(call.from_user.id, db, bot)
+            await call.message.answer(summary_text, reply_markup=admin_panel())
         elif action == 'start_photo':
             await state.set_state(AdminFlow.waiting_start_photo)
             await call.message.answer("عکس جدید پیام /start را ارسال کنید. برای حذف عکس، متن /remove_photo را بفرستید.", reply_markup=cancel_keyboard())

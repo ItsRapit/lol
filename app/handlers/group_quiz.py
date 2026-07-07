@@ -337,6 +337,44 @@ async def edit_lobby(bot: Bot, lobby: GroupLobby, text: str, reply_markup=None) 
         logger.exception("Edit group lobby failed")
 
 
+async def close_all_games_for_maintenance(bot: Bot) -> int:
+    """Force-closes every live lobby, group quiz, and group duel in memory (used when maintenance mode turns on)."""
+    closed = 0
+    for lobby_id, lobby in list(lobbies.items()):
+        try:
+            if lobby.timeout_task and not lobby.timeout_task.done():
+                lobby.timeout_task.cancel()
+            await edit_lobby(bot, lobby, "🛠 ربات وارد حالت تعمیر شد و این بازی بسته شد", None)
+        except Exception:
+            logger.exception("Could not close lobby %s for maintenance", lobby_id)
+        finally:
+            lobbies.pop(lobby_id, None)
+            closed += 1
+
+    for lobby_id, game in list(games.items()):
+        try:
+            for task in game.timer_tasks.values():
+                if task and not task.done():
+                    task.cancel()
+            await edit_lobby(bot, game.lobby, "🛠 ربات وارد حالت تعمیر شد و این بازی بسته شد", None)
+        except Exception:
+            logger.exception("Could not close group game %s for maintenance", lobby_id)
+        finally:
+            games.pop(lobby_id, None)
+            closed += 1
+
+    for lobby_id, game in list(group_duels.items()):
+        try:
+            await edit_lobby(bot, game.lobby, "🛠 ربات وارد حالت تعمیر شد و این بازی بسته شد", None)
+        except Exception:
+            logger.exception("Could not close group duel %s for maintenance", lobby_id)
+        finally:
+            group_duels.pop(lobby_id, None)
+            closed += 1
+
+    return closed
+
+
 @router.message(Command("quiz"))
 async def group_quiz_start(message: Message, db: Database, bot: Bot) -> None:
     if message.chat.type == "private":
