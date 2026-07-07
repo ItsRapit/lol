@@ -131,7 +131,8 @@ def review_question_keyboard(qid: int) -> InlineKeyboardMarkup:
 
 def broadcast_confirm_keyboard() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="✅ ارسال به همه", callback_data="broadcast_confirm")
+    b.button(text="📤 فوروارد بشه (منبع نمایش داده بشه)", callback_data="broadcast_confirm:forward")
+    b.button(text="📋 کپی بشه (بدون منبع)", callback_data="broadcast_confirm:copy")
     b.button(text="❌ لغو", callback_data="broadcast_cancel")
     b.adjust(1)
     return b.as_markup()

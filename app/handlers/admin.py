@@ -1252,7 +1252,7 @@ async def broadcast_preview(message: Message, db: Database, state: FSMContext) -
         await state.set_state(AdminFlow.waiting_broadcast_confirm)
         user_count = len(await db.all_user_ids())
         await message.answer(
-            f"⬆️ پیش‌نمایش پیام همگانی\nبرای {user_count} کاربر عیناً همینی که بالاست فرستاده میشه\nمطمئنی؟",
+            f"⬆️ پیش‌نمایش پیام همگانی\nبرای {user_count} کاربر ارسال میشه\nمی‌خوای چطور فرستاده بشه؟",
             reply_markup=broadcast_confirm_keyboard(),
         )
     except Exception:
@@ -1273,11 +1273,12 @@ async def broadcast_cancel(call: CallbackQuery, db: Database, state: FSMContext)
         await call.answer("خطا", show_alert=True)
 
 
-@router.callback_query(F.data == "broadcast_confirm")
+@router.callback_query(F.data.startswith("broadcast_confirm:"))
 async def broadcast_confirm(call: CallbackQuery, db: Database, state: FSMContext, bot: Bot) -> None:
     try:
         if not await require_admin_call(call, db):
             return
+        mode = call.data.split(":", 1)[1]
         data = await state.get_data()
         chat_id = data.get("broadcast_chat_id")
         message_id = data.get("broadcast_message_id")
@@ -1285,23 +1286,31 @@ async def broadcast_confirm(call: CallbackQuery, db: Database, state: FSMContext
         if not chat_id or not message_id:
             await call.answer("پیام همگانی پیدا نشد، دوباره امتحان کن", show_alert=True)
             return
-        await call.message.edit_text("📢 در حال ارسال پیام همگانی...")
         await call.answer()
+        await call.message.edit_text("📢 در حال ارسال پیام همگانی...")
         user_ids = await db.all_user_ids()
         sent = 0
         failed = 0
-        for uid in user_ids:
-            try:
-                await bot.copy_message(chat_id=uid, from_chat_id=chat_id, message_id=message_id)
-                sent += 1
-            except Exception:
-                failed += 1
-            await asyncio.sleep(0.05)
-        await db.log_admin(call.from_user.id, "broadcast", f"sent={sent} failed={failed}")
-        await call.message.answer(f"✅ پیام همگانی ارسال شد\nموفق {sent} | ناموفق {failed}")
+        try:
+            for uid in user_ids:
+                try:
+                    if mode == "forward":
+                        await bot.forward_message(chat_id=uid, from_chat_id=chat_id, message_id=message_id)
+                    else:
+                        await bot.copy_message(chat_id=uid, from_chat_id=chat_id, message_id=message_id)
+                    sent += 1
+                except Exception:
+                    failed += 1
+                await asyncio.sleep(0.05)
+        finally:
+            await db.log_admin(call.from_user.id, "broadcast", f"mode={mode} sent={sent} failed={failed} total={len(user_ids)}")
+            await call.message.answer(f"✅ پیام همگانی ارسال شد\nموفق {sent} | ناموفق {failed}")
     except Exception:
         logger.exception("Broadcast send failed")
-        await call.answer("خطا در ارسال پیام همگانی", show_alert=True)
+        try:
+            await call.message.answer("خطا در ارسال پیام همگانی")
+        except Exception:
+            logger.exception("Broadcast error notify failed")
 
 
 @router.callback_query(F.data.startswith("discount:"))
