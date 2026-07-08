@@ -15,10 +15,6 @@ QUEST_REMINDER_LINES = [
     "هنوز وقت داری امروز کوئست‌هارو کامل کنی، بجنب 🎯",
     "یادت نره امروز بازی کنی، کوئست‌هات باز مونده",
 ]
-QUEST_REMINDER_WITH_PROGRESS = [
-    "{summary}، یه بازی دیگه بزن تمومش کن 🎯",
-    "نزدیکی به جایزه: {summary} 🎯",
-]
 
 INACTIVE_GIFT_LINES = [
     "چند وقته پیدات نیست، {coins} سکه گذاشتم تو حسابت، بیا یه بازی بزن 🎮",
@@ -33,7 +29,7 @@ async def send_daily_quest_reminders(bot: Bot, db: Database) -> None:
             try:
                 summary = await db.quest_summary_line(u["telegram_id"])
                 if summary:
-                    text = random.choice(QUEST_REMINDER_WITH_PROGRESS).format(summary=summary)
+                    text = f"کوئست روزانه🎯\n{summary}"
                 else:
                     text = random.choice(QUEST_REMINDER_LINES).format(n=3)
                 await bot.send_message(u["telegram_id"], text)

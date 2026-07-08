@@ -14,22 +14,6 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
-def quest_progress_hint(goal_type: str, remaining: int) -> str:
-    if remaining <= 0:
-        return "تمومش کن، جایزه‌ات آماده‌ست"
-    if goal_type == "win_duels":
-        return f"فقط {remaining} تا دوئل دیگه ببر"
-    if goal_type == "start_duels":
-        return f"فرقی نمی‌کنه ببری یا نه، {remaining} تا دوئل دیگه بازی کن"
-    if goal_type == "group_first_place":
-        return f"{remaining} بار دیگه تو بازی گروهی نفر اول شو"
-    if goal_type == "correct_answers":
-        return f"{remaining} تا جواب درست دیگه بده، تو هر بازی‌ای حساب میشه"
-    if goal_type == "play_group_games":
-        return f"{remaining} بازی گروهی دیگه بازی کن، فقط شرکت کنی کافیه"
-    return f"{remaining} تا مونده"
-
-
 async def check_force_join_private(message: Message, db: Database, bot: Bot) -> bool:
     if await db.is_admin(message.from_user.id):
         return True
@@ -249,7 +233,6 @@ async def daily_quests(message: Message, db: Database) -> None:
     for q in quests:
         progress = min(int(q['progress']), int(q['goal_count']))
         goal = int(q['goal_count'])
-        remaining = max(0, goal - progress)
         if q['claimed']:
             mark = "✅"
             status = "تکمیل شد"
@@ -259,8 +242,7 @@ async def daily_quests(message: Message, db: Database) -> None:
         else:
             mark = "⬜"
             status = f"{progress}/{goal}"
-        hint = q['description'] if q['claimed'] or q['completed'] else quest_progress_hint(q['goal_type'], remaining)
-        lines.append(f"{mark} {q['title']} — {status}\n{hint}\n🎁 {q['reward_coins']} سکه + {q['reward_xp']} XP")
+        lines.append(f"{mark} {q['title']} — {status}\n{q['description']}\n🎁 {q['reward_coins']} سکه + {q['reward_xp']} XP")
     await message.answer("\n\n".join(lines), reply_markup=quests_keyboard(quests))
 
 
@@ -277,7 +259,6 @@ async def quest_claim_all(call: CallbackQuery, db: Database) -> None:
         for q in quests:
             progress = min(int(q['progress']), int(q['goal_count']))
             goal = int(q['goal_count'])
-            remaining = max(0, goal - progress)
             if q['claimed']:
                 mark = "✅"
                 status = "تکمیل شد"
@@ -287,8 +268,7 @@ async def quest_claim_all(call: CallbackQuery, db: Database) -> None:
             else:
                 mark = "⬜"
                 status = f"{progress}/{goal}"
-            hint = q['description'] if q['claimed'] or q['completed'] else quest_progress_hint(q['goal_type'], remaining)
-            lines.append(f"{mark} {q['title']} — {status}\n{hint}\n🎁 {q['reward_coins']} سکه + {q['reward_xp']} XP")
+            lines.append(f"{mark} {q['title']} — {status}\n{q['description']}\n🎁 {q['reward_coins']} سکه + {q['reward_xp']} XP")
         await call.message.edit_text("\n\n".join(lines), reply_markup=quests_keyboard(quests))
         if quests and all(q['claimed'] for q in quests):
             await call.message.answer("🔥 امروز فعال بودی\nکل کوئست‌های امروز تموم شد و جایزه هارو گرفتی\nفردا یه سری کوئست جدید منتظر")

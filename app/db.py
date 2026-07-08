@@ -37,6 +37,21 @@ def now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+def quest_reminder_line(goal_type: str, goal: int, remaining: int) -> str:
+    """Builds a full, goal-type-specific reminder line for the daily quest reminder job."""
+    if goal_type == "correct_answers":
+        return f"از {goal} تا سوالی که باید جواب می‌دادی فقط {remaining} تا مونده، همینجوری پیش برو"
+    if goal_type == "win_duels":
+        return f"از {goal} تا دوئلی که باید می‌بردی فقط {remaining} تا مونده، همینجوری پیش برو"
+    if goal_type == "start_duels":
+        return f"از {goal} تا دوئلی که باید بازی می‌کردی فقط {remaining} تا مونده، همینجوری پیش برو"
+    if goal_type == "play_group_games":
+        return f"از {goal} تا بازی گروهی که باید می‌کردی فقط {remaining} تا مونده، همینجوری پیش برو"
+    if goal_type == "group_first_place":
+        return f"از {goal} بار نفر اول شدنی که باید می‌کردی فقط {remaining} تا مونده، همینجوری پیش برو"
+    return f"فقط {remaining} تا مونده تا این کوئست تموم بشه، همینجوری پیش برو"
+
+
 class Database:
     """Single database gateway. Handlers must not open SQLite connections directly."""
 
@@ -389,16 +404,7 @@ class Database:
         await self.add_column_if_missing("duels", "bot_level", "bot_level INTEGER")
         await self.add_column_if_missing("user_daily_quests", "near_complete_notified", "near_complete_notified INTEGER NOT NULL DEFAULT 0")
         await self.add_column_if_missing("users", "started_pv", "started_pv INTEGER NOT NULL DEFAULT 0")
-        added_free_chat_col = "free_chat_enabled" not in await self.table_columns("users")
-        await self.add_column_if_missing("users", "free_chat_enabled", "free_chat_enabled INTEGER NOT NULL DEFAULT 1")
-        if not added_free_chat_col:
-            # Column may already exist from an earlier version where the default was 0; make the
-            # new default (chat enabled) apply to existing rows too, but only once ever, so we
-            # don't keep re-enabling it for users who deliberately turned it off later.
-            already_migrated = await self.get_setting("free_chat_default_migrated", "")
-            if not already_migrated:
-                await self.execute_write("UPDATE users SET free_chat_enabled=1 WHERE free_chat_enabled=0")
-                await self.set_setting("free_chat_default_migrated", "1")
+        await self.add_column_if_missing("users", "free_chat_enabled", "free_chat_enabled INTEGER NOT NULL DEFAULT 0")
         await self.execute_write("UPDATE shop_packages SET package_type=CASE WHEN xp>0 AND coins=0 THEN 'xp' ELSE 'coins' END WHERE package_type IS NULL OR package_type='' OR package_type='coins'")
         for pkg in await self.fetchall("SELECT id,price_label FROM shop_packages WHERE price_amount=0"):
             amount = self.parse_price_amount(pkg["price_label"])
@@ -591,7 +597,7 @@ class Database:
                 just_completed.append(r)
             elif not r["near_complete_notified"] and new_progress >= int(r["goal_count"]) * 0.7:
                 await self.execute_write("UPDATE user_daily_quests SET near_complete_notified=1 WHERE id=?", (r["id"],))
-                near_complete.append({"title": r["title"], "progress": new_progress, "goal_count": int(r["goal_count"])})
+                near_complete.append({"title": r["title"], "progress": new_progress, "goal_count": int(r["goal_count"]), "goal_type": goal_type})
         if bot is not None:
             try:
                 if just_completed:
@@ -661,7 +667,8 @@ class Database:
             return None
         q = min(pending, key=lambda r: int(r["goal_count"]) - int(r["progress"]))
         remaining = int(q["goal_count"]) - int(q["progress"])
-        return f"«{q['title']}» — {remaining} تا مونده"
+        goal = int(q["goal_count"])
+        return quest_reminder_line(q["goal_type"], goal, remaining)
 
     async def inactive_users_for_gift(self, days: int = 7) -> list[aiosqlite.Row]:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
