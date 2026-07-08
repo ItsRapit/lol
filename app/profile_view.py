@@ -34,7 +34,10 @@ async def build_profile_text(
     required_xp = max(1, int(nxt) - int(cur))
     username = f"@{u['username']}" if (show_username and u['username']) else ""
     total_duels = int(u['wins']) + int(u['losses']) + int(u['draws'])
-    wrong = max(0, int(u['total_answers']) - int(u['correct_answers']))
+    correct = int(u['correct_answers'])
+    total_answers = int(u['total_answers'])
+    wrong = max(0, total_answers - correct)
+    accuracy = int((correct / total_answers) * 100) if total_answers else 0
 
     level_pos = await db.leaderboard_user_position(telegram_id, "level", "all")
     league_pos = await db.leaderboard_user_position(telegram_id, "league", "all")
@@ -55,9 +58,15 @@ async def build_profile_text(
             for i, r in enumerate(analysis['strengths'])
         )
         weaknesses = "\n".join(f"📉 {r['genre']} — {int(r['pct'])}%" for r in analysis['weaknesses'])
-        genre_analysis = f"\n\n💪 نقاط قوت:\n{strengths}"
-        if weaknesses:
-            genre_analysis += f"\n\n⚠️ نقاط ضعف:\n{weaknesses}"
+        genre_analysis = f"\n\n💪 قوی: {'، '.join(r['genre'] for r in analysis['strengths'])}"
+        if analysis['weaknesses']:
+            genre_analysis += f"\n📉 ضعیف: {'، '.join(r['genre'] for r in analysis['weaknesses'])}"
+
+    achievements = await db.user_achievements(telegram_id)
+    achievements_text = ""
+    if achievements:
+        lines_a = "\n".join(f"{a['emoji']} {a['title']}" for a in achievements)
+        achievements_text = f"\n\n🏅 دستاوردهات\n{lines_a}"
 
     avg_response = await db.user_avg_response_seconds(telegram_id)
     joined_days = jalali_date_diff_days(u['created_at']) or 0
@@ -70,15 +79,14 @@ async def build_profile_text(
         lines.append(f"ایکس‌پی {current_xp}/{required_xp} {xp_bar(current_xp, required_xp)}")
     lines.append(f"🏆 {league_name} — {u['cups']} جام")
     if show_coins:
-        lines.append(f"🪙 سکه {u['coins']}")
+        lines.append(f"🪙 {u['coins']} سکه")
     if positions:
         lines.append(positions)
     lines.extend([
         "",
-        f"⚔️ دوئل‌ها {total_duels} | برد {u['wins']} / مساوی {u['draws']} / شکست {u['losses']}",
-        f"✅ پاسخ صحیح {u['correct_answers']} | ❌ پاسخ غلط {wrong}",
+        f"⚔️ {total_duels} دوئل — 🟢{u['wins']} برد 🟡{u['draws']} مساوی 🔴{u['losses']} باخت",
+        f"✅ پاسخ صحیح {correct} | ❌ پاسخ غلط {wrong}",
+        f"✅ {accuracy}% دقت" + (f" | ⏱ {avg_response} ثانیه میانگین" if avg_response else ""),
+        f"📅 {joined_days} روزه عضوی",
     ])
-    if avg_response:
-        lines.append(f"⏱ میانگین زمان پاسخ {avg_response} ثانیه")
-    lines.append(f"📅 {joined_days} روزه عضو ربات هستی")
-    return "\n".join(lines) + genre_analysis
+    return "\n".join(lines) + genre_analysis + achievements_text

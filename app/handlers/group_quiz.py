@@ -146,11 +146,18 @@ async def check_channel_membership(bot: Bot, user_id: int, channel_id: str) -> b
 
 
 async def ensure_user_started_callback(call: CallbackQuery, db: Database, referrer_id: int | None = None) -> bool:
-    user_exists = await db.fetchone("SELECT id FROM users WHERE telegram_id = ?", (call.from_user.id,))
-    if not user_exists:
-        payload = f"ref_{referrer_id}" if referrer_id else "from_group_game"
+    user_row = await db.fetchone("SELECT id, is_blocked FROM users WHERE telegram_id = ?", (call.from_user.id,))
+    payload = f"ref_{referrer_id}" if referrer_id else "from_group_game"
+    if not user_row:
         await call.answer(
             text="چالشینو\n\nاول ربات رو استارت کن",
+            show_alert=True,
+            url=f"https://t.me/ChalleshinoBot?start={payload}",
+        )
+        return False
+    if user_row["is_blocked"]:
+        await call.answer(
+            text="ربات رو بلاک کردی، برای شرکت تو بازی اول آنبلاکش کن و دوباره استارت بزن",
             show_alert=True,
             url=f"https://t.me/ChalleshinoBot?start={payload}",
         )
@@ -180,6 +187,13 @@ async def require_registered_and_join(call: CallbackQuery, db: Database, bot: Bo
         await call.answer(
             text="برای شرکت تو بازی اول ربات رو استارت کن 👇 @ChalleshinoBot",
             show_alert=True,
+        )
+        return False
+    if user["is_blocked"]:
+        await call.answer(
+            text="ربات رو بلاک کردی، برای شرکت تو بازی اول آنبلاکش کن و دوباره استارت بزن",
+            show_alert=True,
+            url="https://t.me/ChalleshinoBot?start=from_group_game",
         )
         return False
     return await require_force_join(call, db, bot)

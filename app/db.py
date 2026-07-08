@@ -334,6 +334,15 @@ class Database:
                 UNIQUE(user_id, quest_template_id, date)
             )""",
             "CREATE INDEX IF NOT EXISTS idx_user_daily_quests_lookup ON user_daily_quests(user_id, date)",
+            """CREATE TABLE IF NOT EXISTS user_achievements(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                genre TEXT NOT NULL,
+                tier TEXT NOT NULL,
+                achieved_at TEXT NOT NULL,
+                UNIQUE(user_id, genre, tier)
+            )""",
+            "CREATE INDEX IF NOT EXISTS idx_user_achievements_lookup ON user_achievements(user_id)",
         ]
         async with self._write_lock:
             for sql in statements:
@@ -749,7 +758,9 @@ class Database:
                ON CONFLICT(telegram_id) DO UPDATE SET username=excluded.username, first_name=excluded.first_name, updated_at=excluded.updated_at""",
             (tg_id, username, first_name, ts, ts, 1 if from_pv else 0),
         )
-        if from_pv and exists and not exists["started_pv"]:
+        if from_pv and exists:
+            # Any genuine PV interaction (e.g. /start) means the user has the chat open again,
+            # so clear any stale is_blocked flag and make sure started_pv is set.
             await self.execute_write("UPDATE users SET started_pv=1, is_blocked=0 WHERE telegram_id=?", (tg_id,))
         user = await self.get_user(tg_id)
         if user and referred_by_tg and referred_by_tg != tg_id and not user["referred_by"]:
@@ -1288,13 +1299,27 @@ class Database:
                 "league_demoted": after["league_order"] < before[uid]["league_order"],
                 "new_title": after["title_id"] != before[uid].get("title_id"),
             }
-        await self.update_genre_stats_for_duel(duel_id)
+        await self.update_genre_stats_for_duel(duel_id, bot=bot)
         await self.clear_other_active_duels_for_users([p1, p2], keep_duel_id=duel_id)
         await self.activate_referrals_for_players([p1, p2])
         return {"winner": winner, "stats": stats, "transitions": transitions}
 
 
-    async def update_genre_stats_for_duel(self, duel_id: int) -> None:
+    ACHIEVEMENT_TIERS = [
+        ("gold", 500, 50, 500, "🥇"),
+        ("silver", 200, 20, 100, "🥈"),
+        ("bronze", 50, 5, 20, "🥉"),
+    ]
+
+    def achievement_title(self, genre: str, tier: str) -> str:
+        titles = {
+            "gold": f"خدای {genre}",
+            "silver": f"قهرمان {genre}",
+            "bronze": f"مترجم {genre}" if genre in ("زبان انگلیسی", "انگلیسی") else f"شاگرد {genre}",
+        }
+        return titles.get(tier, f"{genre} {tier}")
+
+    async def update_genre_stats_for_duel(self, duel_id: int, bot: Any = None) -> None:
         rows = await self.fetchall("""SELECT a.user_id, q.genre, SUM(a.is_correct) correct, COUNT(*) total
                                       FROM duel_answers a JOIN questions q ON q.id=a.question_id
                                       WHERE a.duel_id=? GROUP BY a.user_id, q.genre""", (duel_id,))
@@ -1308,6 +1333,51 @@ class Database:
                                       total=total+excluded.total,
                                       last_updated=excluded.last_updated""",
                                      (r['user_id'], r['genre'], int(r['correct'] or 0), int(r['total'] or 0), now_iso()))
+            await self.check_genre_achievement(r['user_id'], r['genre'], bot=bot)
+
+    async def check_genre_achievement(self, user_id: int, genre: str, bot: Any = None) -> None:
+        row = await self.fetchone("SELECT correct FROM user_genre_stats WHERE user_id=? AND genre=?", (user_id, genre))
+        if not row:
+            return
+        correct = int(row["correct"])
+        for tier, threshold, coins, xp, emoji in reversed(self.ACHIEVEMENT_TIERS):
+            if correct < threshold:
+                continue
+            already = await self.fetchone("SELECT 1 FROM user_achievements WHERE user_id=? AND genre=? AND tier=?", (user_id, genre, tier))
+            if already:
+                continue
+            await self.execute_write(
+                "INSERT INTO user_achievements(user_id,genre,tier,achieved_at) VALUES(?,?,?,?)",
+                (user_id, genre, tier, now_iso()),
+            )
+            if coins:
+                await self.change_coins(user_id, coins, "achievement_reward")
+            if xp:
+                await self.change_xp(user_id, xp, "achievement_reward")
+            if bot is not None:
+                try:
+                    title = self.achievement_title(genre, tier)
+                    await bot.send_message(
+                        user_id,
+                        f"🏅 دستاورد جدید!\nرسیدی به «{emoji} {title}»\n🎁 {coins} سکه + {xp} XP",
+                    )
+                except Exception:
+                    logger.exception("Achievement notify failed for user=%s", user_id)
+
+    async def user_achievements(self, user_id: int) -> list[dict[str, Any]]:
+        """Returns the highest-tier achievement per genre the user has unlocked."""
+        rows = await self.fetchall(
+            "SELECT genre, tier, achieved_at FROM user_achievements WHERE user_id=? ORDER BY achieved_at ASC",
+            (user_id,),
+        )
+        tier_rank = {"bronze": 1, "silver": 2, "gold": 3}
+        emoji_map = {"gold": "🥇", "silver": "🥈", "bronze": "🥉"}
+        best: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            genre = r["genre"]
+            if genre not in best or tier_rank[r["tier"]] > tier_rank[best[genre]["tier"]]:
+                best[genre] = {"genre": genre, "tier": r["tier"], "emoji": emoji_map[r["tier"]], "title": self.achievement_title(genre, r["tier"])}
+        return list(best.values())
 
     async def user_strengths_weaknesses(self, user_id: int) -> dict[str, list[aiosqlite.Row]]:
         min_answers = await self.get_int("genre_stats_min_answers", 1)
