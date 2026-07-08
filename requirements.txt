@@ -1,6 +1,7 @@
-aiogram==3.10.0
-aiosqlite==0.20.0
-python-dotenv==1.0.1
-pydantic-settings==2.3.4
-jdatetime==5.0.0
-apscheduler==3.10.4
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
