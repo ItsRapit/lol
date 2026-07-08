@@ -1,7 +1,7 @@
-BOT_TOKEN=
-BOT_USERNAME=
-OWNER_ADMIN_IDS=123456789,987654321
-ADMIN_REVIEW_CHANNEL_ID=-1001234567890
-REPORTS_CHANNEL_ID=-1001234567891
-DATABASE_PATH=/data/quiz_duel.sqlite3
-LOG_LEVEL=INFO
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

@@ -389,7 +389,16 @@ class Database:
         await self.add_column_if_missing("duels", "bot_level", "bot_level INTEGER")
         await self.add_column_if_missing("user_daily_quests", "near_complete_notified", "near_complete_notified INTEGER NOT NULL DEFAULT 0")
         await self.add_column_if_missing("users", "started_pv", "started_pv INTEGER NOT NULL DEFAULT 0")
-        await self.add_column_if_missing("users", "free_chat_enabled", "free_chat_enabled INTEGER NOT NULL DEFAULT 0")
+        added_free_chat_col = "free_chat_enabled" not in await self.table_columns("users")
+        await self.add_column_if_missing("users", "free_chat_enabled", "free_chat_enabled INTEGER NOT NULL DEFAULT 1")
+        if not added_free_chat_col:
+            # Column may already exist from an earlier version where the default was 0; make the
+            # new default (chat enabled) apply to existing rows too, but only once ever, so we
+            # don't keep re-enabling it for users who deliberately turned it off later.
+            already_migrated = await self.get_setting("free_chat_default_migrated", "")
+            if not already_migrated:
+                await self.execute_write("UPDATE users SET free_chat_enabled=1 WHERE free_chat_enabled=0")
+                await self.set_setting("free_chat_default_migrated", "1")
         await self.execute_write("UPDATE shop_packages SET package_type=CASE WHEN xp>0 AND coins=0 THEN 'xp' ELSE 'coins' END WHERE package_type IS NULL OR package_type='' OR package_type='coins'")
         for pkg in await self.fetchall("SELECT id,price_label FROM shop_packages WHERE price_amount=0"):
             amount = self.parse_price_amount(pkg["price_label"])
