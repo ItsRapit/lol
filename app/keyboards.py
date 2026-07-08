@@ -32,10 +32,12 @@ def back_home_keyboard() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def duel_menu(random_cost: int = 5, bot_cost: int = 3) -> InlineKeyboardMarkup:
+def duel_menu(random_cost: int = 5, bot_cost: int = 3, free_chat_enabled: bool = False) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text=f"🎲 دوئل شانسی — {random_cost} سکه", callback_data="duel:random")
     b.button(text=f"🤖 دوئل با ربات — {bot_cost} سکه", callback_data="duel:bot")
+    chat_label = "💬 گفتگوی آزاد: روشن ✅" if free_chat_enabled else "💬 گفتگوی آزاد: خاموش ❌"
+    b.button(text=chat_label, callback_data="duel:toggle_free_chat")
     b.adjust(1)
     return b.as_markup()
 

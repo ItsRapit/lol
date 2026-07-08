@@ -90,7 +90,23 @@ async def duel_entry(message: Message, db: Database) -> None:
         return
     random_cost = await db.get_int('random_duel_cost', 5)
     bot_cost = await db.get_int('bot_duel_cost', 3)
-    await message.answer("⚔️ دوئل\nیکی رو انتخاب کن", reply_markup=duel_menu(random_cost, bot_cost))
+    free_chat = bool(u['free_chat_enabled'])
+    chat_note = "\n\n💬 گفتگوی شما فعال است، هرکسی حین بازی می‌تواند به شما پیام دهد\nبرای غیرفعال‌کردن دکمه‌ی گفتگوی آزاد رو بزن" if free_chat else ""
+    await message.answer(f"⚔️ دوئل\nیکی رو انتخاب کن{chat_note}", reply_markup=duel_menu(random_cost, bot_cost, free_chat))
+
+
+@router.callback_query(F.data == "duel:toggle_free_chat")
+async def toggle_free_chat_callback(call: CallbackQuery, db: Database) -> None:
+    try:
+        new_state = await db.toggle_free_chat(call.from_user.id)
+        random_cost = await db.get_int('random_duel_cost', 5)
+        bot_cost = await db.get_int('bot_duel_cost', 3)
+        chat_note = "\n\n💬 گفتگوی شما فعال است، هرکسی حین بازی می‌تواند به شما پیام دهد\nبرای غیرفعال‌کردن دکمه‌ی گفتگوی آزاد رو بزن" if new_state else ""
+        await call.message.edit_text(f"⚔️ دوئل\nیکی رو انتخاب کن{chat_note}", reply_markup=duel_menu(random_cost, bot_cost, new_state))
+        await call.answer("گفتگوی آزاد روشن شد" if new_state else "گفتگوی آزاد خاموش شد", show_alert=False)
+    except Exception:
+        logger.exception("Toggle free chat failed")
+        await call.answer("خطا", show_alert=True)
 
 
 @router.callback_query(F.data == "duel:random")
@@ -1016,3 +1032,25 @@ async def duel_report_cancel(call: CallbackQuery) -> None:
         await call.message.edit_text("گزارش لغو شد")
     except Exception:
         logger.exception("Duel report cancel failed")
+
+
+@router.message(F.text, ~F.text.startswith("/"))
+async def free_chat_relay(message: Message, db: Database) -> None:
+    """Last-resort handler: if both players in the sender's active duel have free chat on,
+    forward the plain text message to the opponent. Never touches commands or menu buttons,
+    since those are matched by earlier, more specific handlers first."""
+    try:
+        duel = await db.active_duel_for_user(message.from_user.id)
+        if not duel or duel['status'] != 'playing' or duel['opponent_type'] == 'bot':
+            return
+        opponent_id = duel['player2_id'] if duel['player1_id'] == message.from_user.id else duel['player1_id']
+        if not opponent_id or not is_real_user(opponent_id):
+            return
+        me = await db.get_user(message.from_user.id)
+        opponent = await db.get_user(opponent_id)
+        if not me or not opponent or not me['free_chat_enabled'] or not opponent['free_chat_enabled']:
+            return
+        sender_name = message.from_user.first_name or message.from_user.username or "حریف"
+        await message.bot.send_message(opponent_id, f"💬 {sender_name}: {message.text}")
+    except Exception:
+        logger.exception("Free chat relay failed")

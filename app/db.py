@@ -389,6 +389,7 @@ class Database:
         await self.add_column_if_missing("duels", "bot_level", "bot_level INTEGER")
         await self.add_column_if_missing("user_daily_quests", "near_complete_notified", "near_complete_notified INTEGER NOT NULL DEFAULT 0")
         await self.add_column_if_missing("users", "started_pv", "started_pv INTEGER NOT NULL DEFAULT 0")
+        await self.add_column_if_missing("users", "free_chat_enabled", "free_chat_enabled INTEGER NOT NULL DEFAULT 0")
         await self.execute_write("UPDATE shop_packages SET package_type=CASE WHEN xp>0 AND coins=0 THEN 'xp' ELSE 'coins' END WHERE package_type IS NULL OR package_type='' OR package_type='coins'")
         for pkg in await self.fetchall("SELECT id,price_label FROM shop_packages WHERE price_amount=0"):
             amount = self.parse_price_amount(pkg["price_label"])
@@ -704,6 +705,13 @@ class Database:
 
     async def is_admin(self, telegram_id: int) -> bool:
         return bool(await self.fetchone("SELECT 1 FROM admins WHERE telegram_id=?", (telegram_id,)))
+
+    async def toggle_free_chat(self, telegram_id: int) -> bool:
+        """Flips the user's free-chat-during-duel preference. Returns the new state."""
+        u = await self.get_user(telegram_id)
+        new_state = 0 if (u and u["free_chat_enabled"]) else 1
+        await self.execute_write("UPDATE users SET free_chat_enabled=? WHERE telegram_id=?", (new_state, telegram_id))
+        return bool(new_state)
 
     async def all_admin_ids(self) -> list[int]:
         rows = await self.fetchall("SELECT telegram_id FROM admins")
