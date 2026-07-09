@@ -20,6 +20,10 @@ CANONICAL_GENRES = [
     "طبیعت و جاندار", "معما و هوش", "ادیان", "خودرو و وسایل نقلیه",
     "زبان انگلیسی", "بازی‌های ویدیویی",
 ]
+FACTORY_RANKS = [(1, "تازه‌کار"), (5, "دانشجو"), (10, "استاد"), (20, "قهرمان"), (35, "اسطوره"), (70, "افسانه‌ای"), (100, "مکس لول")]
+FACTORY_MAX_LEVEL = "100"
+FACTORY_XP_LEVEL_CURVE_FACTOR = "112"
+
 GENRE_ALIASES = {"🎲 اطلاعات عمومی": "علم و دانش", "اطلاعات عمومی": "علم و دانش", "عمومی": "علم و دانش", "فناوری": "تکنولوژی", "طبیعت": "طبیعت و جاندار", "حیوانات": "طبیعت و جاندار", "خودرو": "خودرو و وسایل نقلیه", "ماشین": "خودرو و وسایل نقلیه", "سرگرمی": "لوگو و سرگرمی", "لوگو": "لوگو و سرگرمی", "غذا": "غذا و نوشیدنی", "هوش": "معما و هوش", "معما": "معما و هوش", "مذهبی": "ادیان", "انگلیسی": "زبان انگلیسی", "زبان": "زبان انگلیسی", "گیم": "بازی‌های ویدیویی", "بازی ویدیویی": "بازی‌های ویدیویی", "ویدیوگیم": "بازی‌های ویدیویی"}
 
 
@@ -516,8 +520,7 @@ class Database:
             row = await self.fetchone("SELECT value FROM settings WHERE key=?", (key,))
             if row and row["value"] == old_value:
                 await self.set_setting(key, new_value)
-        ranks = [(1, "تازه‌کار"), (5, "دانشجو"), (10, "استاد"), (20, "قهرمان"), (35, "اسطوره"), (70, "افسانه‌ای"), (100, "مکس لول")]
-        for min_level, title in ranks:
+        for min_level, title in FACTORY_RANKS:
             await self.execute_write("INSERT OR IGNORE INTO ranks(min_level,title) VALUES(?,?)", (min_level, title))
         title_count = await self.fetchone("SELECT COUNT(*) c FROM titles")
         if title_count and title_count["c"] == 0:
@@ -932,6 +935,39 @@ class Database:
         if changed:
             await self.execute_write("UPDATE users SET title_id=? WHERE telegram_id=?", (new['id'], tg_id))
         return old, new, changed
+
+    async def sync_all_titles(self) -> dict[str, int]:
+        """Recompute and apply the correct title for every existing user.
+
+        Useful right after an admin adds/edits/deletes title definitions, so
+        everyone's title reflects the new rules immediately instead of only
+        updating the next time a user levels up.
+        """
+        ids = await self.all_user_ids(exclude_blocked=False)
+        changed = 0
+        for tg_id in ids:
+            _old, _new, did_change = await self.sync_user_title(tg_id)
+            if did_change:
+                changed += 1
+        return {"total": len(ids), "changed": changed}
+
+    async def reset_ranks_and_xp_to_factory(self) -> dict[str, Any]:
+        """Force ranks + level/XP curve settings back to their factory defaults.
+
+        Unlike seed_defaults() (which only fills in missing rows/keys), this
+        overwrites any admin edits on purpose, since it is an explicit
+        "restore factory settings" action.
+        """
+        await self.execute_write("DELETE FROM ranks")
+        for min_level, title in FACTORY_RANKS:
+            await self.execute_write("INSERT INTO ranks(min_level,title) VALUES(?,?)", (min_level, title))
+        await self.set_setting("max_level", FACTORY_MAX_LEVEL)
+        await self.set_setting("xp_level_curve_factor", FACTORY_XP_LEVEL_CURVE_FACTOR)
+        return {
+            "ranks": FACTORY_RANKS,
+            "max_level": FACTORY_MAX_LEVEL,
+            "xp_level_curve_factor": FACTORY_XP_LEVEL_CURVE_FACTOR,
+        }
 
     async def titles(self) -> list[aiosqlite.Row]:
         return await self.fetchall("SELECT * FROM titles ORDER BY min_level,id")

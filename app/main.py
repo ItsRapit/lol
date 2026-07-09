@@ -29,6 +29,7 @@ ADMIN_COMMANDS = PUBLIC_COMMANDS + [
     BotCommand(command="guide", description="راهنمای کامندهای ادمین"),
     BotCommand(command="user", description="جستجوی کاربر با آیدی"),
     BotCommand(command="version", description="نمایش نسخه فعال"),
+    BotCommand(command="stats", description="آمار کامل ربات"),
     BotCommand(command="sync_defaults", description="همگام‌سازی تنظیمات پیش‌فرض"),
     BotCommand(command="migrate_xp_curve", description="اعمال منحنی XP جدید"),
     BotCommand(command="setlevel", description="تنظیم نام و ایموجی لول"),

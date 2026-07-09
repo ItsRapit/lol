@@ -45,6 +45,60 @@ async def require_admin_message(message: Message, db: Database) -> bool:
     return True
 
 
+async def build_stats_text(db: Database) -> str:
+    s = await db.stats()
+    return (
+        "📊 آمار کامل چالشینو\n\n"
+        "👥 کاربران\n"
+        f"• کل کاربران: {s['users']}\n"
+        f"• کاربران جدید امروز: {s['new_users_today']}\n\n"
+        "⚔️ دوئل‌های پیوی\n"
+        f"• کل دوئل‌ها: {s['duels']}\n"
+        f"• دوئل‌های تمام‌شده: {s['finished_duels']}\n"
+        f"• دوئل‌های امروز: {s['duels_today']}\n\n"
+        "🧑‍🤝‍🧑 دوئل با بازیکن‌ها\n"
+        f"• کل: {s['human_duels']}\n"
+        f"• تمام‌شده: {s['human_duels_finished']}\n"
+        f"• امروز: {s['human_duels_today']}\n\n"
+        "🤖 دوئل با ربات\n"
+        f"• کل: {s['bot_duels']}\n"
+        f"• تمام‌شده: {s['bot_duels_finished']}\n"
+        f"• امروز: {s['bot_duels_today']}\n\n"
+        "🎮 بازی‌های گروهی\n"
+        f"• بازی گروهی انجام‌شده: {s['group_quiz_total']}\n"
+        f"• دوئل‌های گروهی انجام‌شده: {s['group_duel_total']}\n"
+        f"• کل بازی‌های گروهی امروز: {s['group_games_today']}\n\n"
+        "💰 درآمد فروشگاه\n"
+        f"• این هفته: {s['revenue_week']:,} تومان\n"
+        f"• این ماه: {s['revenue_month']:,} تومان\n"
+        f"• این سال: {s['revenue_year']:,} تومان\n"
+        f"• خریدهای تاییدشده: {s['approved_transactions']}\n\n"
+        "🪙 اقتصاد بازی\n"
+        f"• کوین تولیدشده واقعی: {s['coins_generated']}\n"
+        f"• کوین مصرف‌شده واقعی: {s['coins_burned']}\n"
+        f"• کل ورودی کوین همه رویدادها: {s['coins_total_positive']}\n"
+        f"• کل خروجی کوین همه رویدادها: {s['coins_total_negative']}\n\n"
+        "❓ سوالات\n"
+        f"• کل سوالات: {s['total_questions']}\n"
+        f"• فعال: {s['active_questions']}\n"
+        f"• غیرفعال: {s['disabled_questions']}\n"
+        f"• در صف بررسی: {s['pending_questions']}\n"
+        f"• ثبت‌شده توسط کاربر: {s['user_questions']}\n"
+        f"• ثبت‌شده توسط ادمین: {s['admin_questions']}"
+    )
+
+
+@router.message(Command("stats"))
+async def stats_command(message: Message, db: Database) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        await message.answer(await build_stats_text(db), reply_markup=admin_submenu_keyboard('reports'))
+    except Exception:
+        logger.exception("Stats command failed")
+        await message.answer("خطا در نمایش آمار.")
+
+
 async def require_admin_call(call: CallbackQuery, db: Database) -> bool:
     if not await db.is_admin(call.from_user.id):
         await call.answer("دسترسی ندارید.", show_alert=True)
@@ -647,21 +701,32 @@ async def admin_callback(call: CallbackQuery, db: Database, state: FSMContext, b
         if action == 'back':
             await call.message.answer("⚙️ پنل مدیریت", reply_markup=admin_panel())
         elif action == 'user_management':
-            await call.message.answer("👥 مدیریت کاربران", reply_markup=admin_submenu_keyboard('user'))
+            await call.message.answer("👥 کاربران و ادمین‌ها", reply_markup=admin_submenu_keyboard('user'))
         elif action == 'question_management':
             await call.message.answer("❓ مدیریت سوالات", reply_markup=admin_submenu_keyboard('question'))
-        elif action == 'game_settings':
-            await call.message.answer("🎮 تنظیمات بازی", reply_markup=admin_submenu_keyboard('game'))
-        elif action == 'economy_settings':
-            await call.message.answer("💰 تنظیمات اقتصادی", reply_markup=admin_submenu_keyboard('economy'))
+        elif action == 'game_economy':
+            await call.message.answer("⚔️ بازی و اقتصاد", reply_markup=admin_submenu_keyboard('game_economy'))
         elif action == 'league_level_settings':
-            await call.message.answer("🏆 تنظیمات لیگ و لول", reply_markup=admin_submenu_keyboard('league'))
+            await call.message.answer("🏆 لیگ، لول، رنک و لقب", reply_markup=admin_submenu_keyboard('league'))
+        elif action == 'shop_settings':
+            await call.message.answer("🛒 فروشگاه و تخفیف", reply_markup=admin_submenu_keyboard('shop'))
         elif action == 'notifications':
-            await call.message.answer("📣 اعلان‌ها", reply_markup=admin_submenu_keyboard('notifications'))
+            await call.message.answer("📣 اعلان‌ها و متن‌ها", reply_markup=admin_submenu_keyboard('notifications'))
+        elif action == 'system_settings':
+            await call.message.answer("🛠 سیستم و امنیت", reply_markup=admin_submenu_keyboard('system'))
         elif action == 'stats_reports':
-            await call.message.answer("📊 آمار و گزارش", reply_markup=admin_submenu_keyboard('reports'))
-        elif action == 'file_config':
-            await call.message.answer("📁 مدیریت فایل Config", reply_markup=admin_submenu_keyboard('file'))
+            await call.message.answer("📊 آمار و بک‌آپ", reply_markup=admin_submenu_keyboard('reports'))
+        elif action == 'reset_ranks_xp':
+            summary = await db.reset_ranks_and_xp_to_factory()
+            await db.log_admin(call.from_user.id, "reset_ranks_xp")
+            await call.message.answer(
+                "🏭 رنک‌ها و ایکس‌پی به تنظیمات فابریک برگشتن.\n\n"
+                f"🏅 رنک‌ها ({len(summary['ranks'])}):\n" +
+                "\n".join(f"لول {min_lvl}+: {title}" for min_lvl, title in summary['ranks']) +
+                f"\n\n🎚 حداکثر لول: {summary['max_level']}\n"
+                f"📈 ضریب منحنی ایکس‌پی: {summary['xp_level_curve_factor']}",
+                reply_markup=admin_submenu_keyboard('league'),
+            )
         elif action == 'animation_preview':
             await call.message.answer("🎬 پیش‌نمایش انیمیشن‌ها", reply_markup=animation_preview_keyboard())
         elif action == 'titles':
@@ -680,46 +745,7 @@ async def admin_callback(call: CallbackQuery, db: Database, state: FSMContext, b
         elif action == 'backup_settings':
             path = await db.export_section_backup('settings'); await call.message.answer_document(FSInputFile(path), caption='بک‌آپ تنظیمات')
         elif action == 'stats':
-            s = await db.stats()
-            await call.message.answer(
-                "📊 آمار کامل چالشینو\n\n"
-                "👥 کاربران\n"
-                f"• کل کاربران: {s['users']}\n"
-                f"• کاربران جدید امروز: {s['new_users_today']}\n\n"
-                "⚔️ دوئل‌های پیوی\n"
-                f"• کل دوئل‌ها: {s['duels']}\n"
-                f"• دوئل‌های تمام‌شده: {s['finished_duels']}\n"
-                f"• دوئل‌های امروز: {s['duels_today']}\n\n"
-                "🧑‍🤝‍🧑 دوئل با بازیکن‌ها\n"
-                f"• کل: {s['human_duels']}\n"
-                f"• تمام‌شده: {s['human_duels_finished']}\n"
-                f"• امروز: {s['human_duels_today']}\n\n"
-                "🤖 دوئل با ربات\n"
-                f"• کل: {s['bot_duels']}\n"
-                f"• تمام‌شده: {s['bot_duels_finished']}\n"
-                f"• امروز: {s['bot_duels_today']}\n\n"
-                "🎮 بازی‌های گروهی\n"
-                f"• بازی گروهی انجام‌شده: {s['group_quiz_total']}\n"
-                f"• دوئل‌های گروهی انجام‌شده: {s['group_duel_total']}\n"
-                f"• کل بازی‌های گروهی امروز: {s['group_games_today']}\n\n"
-                "💰 درآمد فروشگاه\n"
-                f"• این هفته: {s['revenue_week']:,} تومان\n"
-                f"• این ماه: {s['revenue_month']:,} تومان\n"
-                f"• این سال: {s['revenue_year']:,} تومان\n"
-                f"• خریدهای تاییدشده: {s['approved_transactions']}\n\n"
-                "🪙 اقتصاد بازی\n"
-                f"• کوین تولیدشده واقعی: {s['coins_generated']}\n"
-                f"• کوین مصرف‌شده واقعی: {s['coins_burned']}\n"
-                f"• کل ورودی کوین همه رویدادها: {s['coins_total_positive']}\n"
-                f"• کل خروجی کوین همه رویدادها: {s['coins_total_negative']}\n\n"
-                "❓ سوالات\n"
-                f"• کل سوالات: {s['total_questions']}\n"
-                f"• فعال: {s['active_questions']}\n"
-                f"• غیرفعال: {s['disabled_questions']}\n"
-                f"• در صف بررسی: {s['pending_questions']}\n"
-                f"• ثبت‌شده توسط کاربر: {s['user_questions']}\n"
-                f"• ثبت‌شده توسط ادمین: {s['admin_questions']}"
-            )
+            await call.message.answer(await build_stats_text(db), reply_markup=admin_submenu_keyboard('reports'))
         elif action == 'settings':
             await call.message.answer("⚙️ تنظیمات ربات\nیک بخش را انتخاب کن:", reply_markup=admin_settings_categories_keyboard())
         elif action == 'user_search':
@@ -1693,6 +1719,14 @@ async def title_callback(call: CallbackQuery, db: Database, state: FSMContext) -
             await call.message.answer(text, reply_markup=titles_menu_keyboard())
         elif action == "delete_help":
             await call.message.answer("برای حذف لقب بزن: <code>/deltitle ID</code>")
+        elif action == "update_all":
+            await call.message.answer("⏳ در حال آپدیت لقب همه بازیکنان...")
+            result = await db.sync_all_titles()
+            await db.log_admin(call.from_user.id, "title_update_all", details=f"changed={result['changed']}/{result['total']}")
+            await call.message.answer(
+                f"✅ آپدیت لقب‌ها انجام شد.\n👥 کل کاربران: {result['total']}\n🔄 لقب تغییرکرده: {result['changed']}",
+                reply_markup=titles_menu_keyboard(),
+            )
     except Exception:
         logger.exception("Title callback failed")
         await call.message.answer("خطا در مدیریت لقب.")

@@ -32,13 +32,6 @@ def back_home_keyboard() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def profile_refresh_keyboard() -> InlineKeyboardMarkup:
-    b = InlineKeyboardBuilder()
-    b.button(text="🔄 آپدیت پروفایل", callback_data="profile:refresh")
-    b.adjust(1)
-    return b.as_markup()
-
-
 def duel_menu(random_cost: int = 5, bot_cost: int = 3, free_chat_enabled: bool = False) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text=f"🎲 دوئل شانسی — {random_cost} سکه", callback_data="duel:random")
@@ -150,15 +143,15 @@ def broadcast_confirm_keyboard() -> InlineKeyboardMarkup:
 def admin_panel() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     for text, data in [
-        ("👥 مدیریت کاربران", "admin:user_management"),
+        ("👥 کاربران و ادمین‌ها", "admin:user_management"),
         ("❓ مدیریت سوالات", "admin:question_management"),
-        ("🎮 تنظیمات بازی", "admin:game_settings"),
-        ("💰 تنظیمات اقتصادی", "admin:economy_settings"),
-        ("🏆 تنظیمات لیگ و لول", "admin:league_level_settings"),
-        ("📣 اعلان‌ها", "admin:notifications"),
-        ("📊 آمار و گزارش", "admin:stats_reports"),
+        ("⚔️ بازی و اقتصاد", "admin:game_economy"),
+        ("🏆 لیگ، لول، رنک و لقب", "admin:league_level_settings"),
+        ("🛒 فروشگاه و تخفیف", "admin:shop_settings"),
+        ("📣 اعلان‌ها و متن‌ها", "admin:notifications"),
+        ("🛠 سیستم و امنیت", "admin:system_settings"),
+        ("📊 آمار و بک‌آپ", "admin:stats_reports"),
         ("🎬 پیش‌نمایش انیمیشن‌ها", "admin:animation_preview"),
-        ("📁 مدیریت فایل Config", "admin:file_config"),
     ]:
         b.button(text=text, callback_data=data)
     b.adjust(1)
@@ -396,6 +389,7 @@ def titles_menu_keyboard() -> InlineKeyboardMarkup:
     b.button(text="➕ لقب جدید", callback_data="title:add")
     b.button(text="📋 لیست لقب‌ها", callback_data="title:list")
     b.button(text="🗑 حذف لقب", callback_data="title:delete_help")
+    b.button(text="🔄 آپدیت لقب همه بازیکنان", callback_data="title:update_all")
     b.button(text="🔙 بازگشت", callback_data="admin:league_level_settings")
     b.adjust(1)
     return b.as_markup()
@@ -414,14 +408,55 @@ def animation_preview_keyboard() -> InlineKeyboardMarkup:
 
 def admin_submenu_keyboard(kind: str) -> InlineKeyboardMarkup:
     menus = {
-        "user": [("🔍 جستجوی کاربر", "admin:user_search"), ("🪙 تغییر موجودی کاربر", "admin:user_search"), ("🚫 بن/آنبن کاربر", "admin:user_search"), ("👑 مدیریت ادمین‌ها", "admin:add_admin")],
-        "question": [("📋 سوالات در انتظار تأیید", "qadmin_mode:pending"), ("🔍 جستجوی سوال با ID", "admin:question_lookup_help"), ("➕ افزودن سوال دستی", "admin:manual_question_help"), ("📤 آپلود Bulk سوال", "admin:bulk_questions"), ("⚠️ سوالات گزارش‌شده", "admin:question_cleanup")],
-        "game": [("⏱ تایمر سوال", "admin:settings"), ("🎲 هزینه دوئل شانسی", "admin:settings"), ("🔋 تنظیمات پاورآپ‌ها", "admin:settings"), ("📦 تنظیمات جعبه سوال گروهی", "admin:settings"), ("⚔️ تنظیمات دوئل", "admin:settings")],
-        "economy": [("🪙 سکه‌ی اولیه ثبت‌نام", "admin:settings"), ("🎁 جوایز دوئل", "admin:settings"), ("👥 جوایز رفرال", "admin:settings"), ("💎 بسته‌های جم", "admin:shop_manage"), ("🛒 آیتم‌های فروشگاه", "admin:shop_manage")],
-        "league": [("📊 مدیریت لول‌ها", "admin:levels"), ("🏅 مدیریت لقب‌ها", "admin:titles"), ("🏆 مدیریت لیگ‌ها", "admin:leagues"), ("✏️ ویرایش متن‌های انیمیشن", "admin:settings")],
-        "reports": [("📊 آمار", "admin:stats"), ("💾 بک‌آپ کامل", "admin:backup"), ("❓ بک‌آپ سوالات", "admin:backup_questions"), ("👥 بک‌آپ کاربران", "admin:backup_users"), ("⚙️ بک‌آپ تنظیمات", "admin:backup_settings")],
-        "file": [("📤 آپلود بک‌آپ", "admin:upload_backup"), ("💾 بک‌آپ کامل", "admin:backup")],
-        "notifications": [("📢 پیام همگانی", "admin:broadcast"), ("🖼 عکس استارت", "admin:start_photo"), ("🛠 تغییر حالت تعمیر", "admin:maintenance_toggle"), ("⚙️ متن‌ها", "admin:settings")],
+        "user": [
+            ("🔍 جستجو/مدیریت کاربر", "admin:user_search"),
+            ("➕ افزودن ادمین", "admin:add_admin"),
+            ("➖ حذف ادمین", "admin:remove_admin"),
+        ],
+        "question": [
+            ("📋 سوالات در انتظار تأیید", "qadmin_mode:pending"),
+            ("🔍 جستجوی سوال با ID", "admin:question_lookup_help"),
+            ("➕ افزودن سوال دستی", "admin:manual_question_help"),
+            ("📤 آپلود Bulk سوال", "admin:bulk_questions"),
+            ("⚠️ سوالات گزارش‌شده", "admin:question_cleanup"),
+        ],
+        "game_economy": [
+            ("⚔️ تنظیمات دوئل", "settings_cat:duel"),
+            ("🎁 جوایز و اقتصاد بازی", "settings_cat:rewards"),
+            ("🔋 پاورآپ‌ها", "settings_cat:powerups"),
+            ("🎮 بازی گروهی", "settings_cat:group"),
+            ("👥 رفرال و کمک روزانه", "settings_cat:referral"),
+        ],
+        "league": [
+            ("📊 مدیریت لول‌ها", "admin:levels"),
+            ("🏅 مدیریت لقب‌ها", "admin:titles"),
+            ("🏆 مدیریت لیگ‌ها", "admin:leagues"),
+            ("🎚 تنظیمات لول/رنک (XP)", "settings_cat:level"),
+            ("🏭 ریست رنک و ایکس‌پی به فابریک", "admin:reset_ranks_xp"),
+            ("✏️ ویرایش متن‌های انیمیشن", "settings_cat:other"),
+        ],
+        "shop": [
+            ("💎 بسته‌های جم/سکه", "admin:shop_manage"),
+            ("🎟 کدهای تخفیف", "admin:discounts"),
+            ("💳 تنظیمات پرداخت", "settings_cat:shop"),
+        ],
+        "reports": [
+            ("📊 آمار", "admin:stats"),
+            ("💾 بک‌آپ کامل", "admin:backup"),
+            ("❓ بک‌آپ سوالات", "admin:backup_questions"),
+            ("👥 بک‌آپ کاربران", "admin:backup_users"),
+            ("⚙️ بک‌آپ تنظیمات", "admin:backup_settings"),
+            ("📤 آپلود بک‌آپ", "admin:upload_backup"),
+        ],
+        "notifications": [
+            ("📢 پیام همگانی", "admin:broadcast"),
+            ("🖼 عکس استارت", "admin:start_photo"),
+            ("📝 متن‌ها و پیام‌ها", "settings_cat:texts"),
+        ],
+        "system": [
+            ("🛠 تغییر حالت تعمیر (سریع)", "admin:maintenance_toggle"),
+            ("⚙️ تنظیمات کامل سیستم و امنیت", "settings_cat:system"),
+        ],
     }
     b = InlineKeyboardBuilder()
     for text, data in menus.get(kind, []):
