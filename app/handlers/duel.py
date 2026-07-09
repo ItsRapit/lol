@@ -82,6 +82,12 @@ async def try_claim_question_resolution(duel_id: int, qid: int) -> bool:
         return True
 
 
+def free_chat_status_text(enabled: bool) -> str:
+    if enabled:
+        return "💬 گفتگوی آزاد روشنه، حریفت تو دوئل می‌تونه بهت پیام بده\nبرای خاموش کردنش دکمه رو بزن"
+    return "💬 گفتگوی آزاد خاموشه، تو دوئل نمی‌تونی با حریفت پیام رد و بدل کنی\nبرای روشن کردنش دکمه رو بزن"
+
+
 @router.message(F.text == "⚔️ دوئل")
 async def duel_entry(message: Message, db: Database) -> None:
     u = await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name, from_pv=True)
@@ -91,8 +97,8 @@ async def duel_entry(message: Message, db: Database) -> None:
     random_cost = await db.get_int('random_duel_cost', 5)
     bot_cost = await db.get_int('bot_duel_cost', 3)
     free_chat = bool(u['free_chat_enabled'])
-    chat_note = "\n\n💬 گفتگوی شما فعال است، هرکسی حین بازی می‌تواند به شما پیام دهد\nبرای غیرفعال‌کردن دکمه‌ی گفتگوی آزاد رو بزن" if free_chat else ""
-    await message.answer(f"⚔️ دوئل\nیکی رو انتخاب کن{chat_note}", reply_markup=duel_menu(random_cost, bot_cost, free_chat))
+    chat_note = free_chat_status_text(free_chat)
+    await message.answer(f"⚔️ دوئل\nیکی رو انتخاب کن\n\n{chat_note}", reply_markup=duel_menu(random_cost, bot_cost, free_chat))
 
 
 @router.callback_query(F.data == "duel:toggle_free_chat")
@@ -101,9 +107,9 @@ async def toggle_free_chat_callback(call: CallbackQuery, db: Database) -> None:
         new_state = await db.toggle_free_chat(call.from_user.id)
         random_cost = await db.get_int('random_duel_cost', 5)
         bot_cost = await db.get_int('bot_duel_cost', 3)
-        chat_note = "\n\n💬 گفتگوی شما فعال است، هرکسی حین بازی می‌تواند به شما پیام دهد\nبرای غیرفعال‌کردن دکمه‌ی گفتگوی آزاد رو بزن" if new_state else ""
-        await call.message.edit_text(f"⚔️ دوئل\nیکی رو انتخاب کن{chat_note}", reply_markup=duel_menu(random_cost, bot_cost, new_state))
-        await call.answer("گفتگوی آزاد روشن شد" if new_state else "گفتگوی آزاد خاموش شد", show_alert=False)
+        chat_note = free_chat_status_text(new_state)
+        await call.message.edit_text(f"⚔️ دوئل\nیکی رو انتخاب کن\n\n{chat_note}", reply_markup=duel_menu(random_cost, bot_cost, new_state))
+        await call.answer("💬 گفتگوی آزاد روشن شد" if new_state else "💬 گفتگوی آزاد خاموش شد", show_alert=False)
     except Exception:
         logger.exception("Toggle free chat failed")
         await call.answer("خطا", show_alert=True)
@@ -671,6 +677,10 @@ async def finish_and_notify(duel_id: int, db: Database, bot: Bot) -> None:
         summary = await db.duel_user_summary(duel_id, uid)
         wrong_lines = "\n".join(f"• {x['genre']} — جواب درست {x['correct']}" for x in summary['wrong_items']) or "—"
         opponent_id = duel['player1_id'] if uid == duel['player2_id'] else duel['player2_id']
+        me = await db.get_user(uid)
+        opponent = await db.get_user(opponent_id) if is_real_user(opponent_id) else None
+        chat_was_open = bool(me and opponent and me['free_chat_enabled'] and opponent['free_chat_enabled'])
+        chat_closed_note = "\n\n💬 گفتگوی آزاد این دوئل بسته شد" if chat_was_open else ""
         final_text = (
             f"🏁 دوئل تموم شد\n{line}{reward_text}\n\n"
             f"امتیاز تو {stats[uid]['correct']} پاسخ صحیح\n"
@@ -681,6 +691,7 @@ async def finish_and_notify(duel_id: int, db: Database, bot: Bot) -> None:
             f"⏱ میانگین زمان پاسخ {summary['avg_seconds']:.1f} ثانیه\n"
             f"🎯 دقت {summary['accuracy']}%\n\n"
             f"📌 سوالاتی که غلط زدی\n{wrong_lines}"
+            f"{chat_closed_note}"
         )
         is_bot_opponent = duel['opponent_type'] == 'bot'
         markup = duel_finished_keyboard(duel_id, opponent_id, is_bot_opponent)

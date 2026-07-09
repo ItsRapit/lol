@@ -25,6 +25,7 @@ ADMIN_COMMANDS = PUBLIC_COMMANDS + [
     BotCommand(command="admin", description="پنل ادمین"),
     BotCommand(command="bulk", description="ثبت گروهی سوال"),
     BotCommand(command="maintenance", description="روشن/خاموش کردن حالت تعمیر"),
+    BotCommand(command="deletequestions", description="حذف چند سوال با آیدی"),
     BotCommand(command="guide", description="راهنمای کامندهای ادمین"),
     BotCommand(command="user", description="جستجوی کاربر با آیدی"),
     BotCommand(command="version", description="نمایش نسخه فعال"),

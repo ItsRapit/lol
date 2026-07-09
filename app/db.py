@@ -457,8 +457,11 @@ class Database:
             "rank_change_anim_step1": ("✨ یه اتفاق خاص داره می‌افته...", "Rank/league change animation step 1"),
             "rank_change_anim_step2": ("✨🌟 یه اتفاق خاص داره می‌افته...", "Rank/league change animation step 2"),
             "rank_change_anim_step3": ("👑 رتبه‌ات عوض شد!\n{old_rank} ← {new_rank}\nلول {new_level}", "Rank/league change animation final"),
-            "title_anim_step9": ("🎊🎉🎊🎉🎊🎉🎊\n🎉🏆 تبریک! 🏆🎉\n🎊🎉🎊🎉🎊🎉🎊", "New title animation step 9"),
-            "title_anim_step10": ("━━━━━━━━━━━\n🏅 لقب جدید 🏅\n━━━━━━━━━━━\n⚔️ {new_title} ⚔️\n━━━━━━━━━━━\n{level_line}\n{rank_line}", "New title animation final"),
+            "level_up_message": ("🎉 <b>لول‌آپ!</b>\n━━━━━━━━━━━━━━\n🚀 رسیدی به لول {level}\n━━━━━━━━━━━━━━", "PV level-up message"),
+            "rank_up_message": ("👑 <b>ترفیع رنک!</b>\n━━━━━━━━━━━━━━\n🏆 رسیدی به {rank}\n━━━━━━━━━━━━━━", "PV rank/league promotion message"),
+            "rank_down_message": ("📉 سقوط رنک\nرفتی تو {rank}\nولی هنوز وقت هست 💪", "PV rank/league demotion message"),
+            "new_title_message": ("🏅 <b>لقب جدید!</b>\n━━━━━━━━━━━━━━\n✨ به {title} رسیدی ✨\n━━━━━━━━━━━━━━", "PV new title message"),
+            "group_level_up_message": ("🎉 <b>لول‌آپ!</b>\n━━━━━━━━━━━━━━\n{username} رسید به لول {level}\n{title}\n━━━━━━━━━━━━━━", "Group chat level-up message"),
             "daily_question_limit": ("5", "Daily user submissions"),
             "referral_referrer_coins": ("50", "Referrer coin reward"),
             "referral_referrer_xp": ("50", "Referrer XP reward"),
@@ -520,7 +523,21 @@ class Database:
         if title_count and title_count["c"] == 0:
             await self.executemany_write(
                 "INSERT INTO titles(name,emoji,min_level,description,created_at) VALUES(?,?,?,?,?)",
-                [("تازه‌نفس", "🌱", 1, "شروع مسیر", now_iso()), ("شکارچی", "⚔️", 5, "اولین لقب جدی", now_iso()), ("محافظ", "🛡", 10, "بازیکن باتجربه", now_iso()), ("استاد", "👑", 20, "استاد چالش", now_iso())],
+                [
+                    ("Noob", "⚪", 1, "شروع مسیر", now_iso()),
+                    ("Rookie", "🟢", 5, "اولین قدم‌های جدی", now_iso()),
+                    ("Novice", "🔵", 10, "بازیکن باتجربه", now_iso()),
+                    ("Challenger", "🟣", 15, "آماده‌ی چالش‌های سخت‌تر", now_iso()),
+                    ("Veteran", "🟠", 20, "کهنه‌کار میدون", now_iso()),
+                    ("Elite", "🔴", 30, "جزو بهترین‌ها", now_iso()),
+                    ("Master", "🟡", 40, "استاد بازی", now_iso()),
+                    ("Grandmaster", "💠", 50, "استاد بزرگ", now_iso()),
+                    ("Champion", "🔶", 60, "قهرمان بی‌رقیب", now_iso()),
+                    ("Legend", "💎", 70, "افسانه‌ی چالشینو", now_iso()),
+                    ("Mythic", "👑", 80, "در سطح اسطوره‌ای", now_iso()),
+                    ("Immortal", "⚡", 90, "جاودانه‌ی بازی", now_iso()),
+                    ("God of Challeshino", "🌟", 100, "خدای چالشینو", now_iso()),
+                ],
             )
         for i, genre in enumerate(CANONICAL_GENRES):
             await self.execute_write("INSERT OR IGNORE INTO genres(name,is_active,sort_order) VALUES(?,?,?)", (genre, 1, i))
@@ -782,6 +799,10 @@ class Database:
                ON CONFLICT(telegram_id) DO UPDATE SET username=excluded.username, first_name=excluded.first_name, updated_at=excluded.updated_at""",
             (tg_id, username, first_name, ts, ts, 1 if from_pv else 0),
         )
+        if not exists and tg_id != self.BOT_OPPONENT_ID:
+            # Brand-new user: assign their starting title (the level-1 tier) right away,
+            # instead of leaving title_id NULL until their first level-up.
+            await self.sync_user_title(tg_id)
         if from_pv and exists:
             # Any genuine PV interaction (e.g. /start) means the user has the chat open again,
             # so clear any stale is_blocked flag and make sure started_pv is set.
@@ -821,10 +842,13 @@ class Database:
         await self.recalculate_level(tg_id)
 
     def new_curve_cumulative_xp(self, level: int) -> int:
-        # Calibrated: sum from level 1 to 100 ~= 700,000 XP, with early levels still at least 100 XP.
-        if level <= 1:
+        # Calibrated: level 10 -> 2600 cumulative XP, level 100 -> 500,000 cumulative XP.
+        # cumulative(L) = a * L^p, solved so both anchor points hold exactly.
+        if level <= 0:
             return 0
-        return sum(max(100, int(5 * (n ** 1.8))) for n in range(1, level))
+        a = 13.52
+        p = 2.2839966563652006
+        return round(a * (level ** p))
 
     async def xp_required_for_level(self, level: int) -> int:
         try:
@@ -863,7 +887,7 @@ class Database:
         users = await self.fetchall("SELECT telegram_id FROM users")
         for u in users:
             await self.recalculate_level(u['telegram_id'])
-        await self.set_setting('xp_curve_version', 'v2_700k')
+        await self.set_setting('xp_curve_version', 'v3_500k')
         return backup_path
 
     async def level_config_rows(self) -> list[aiosqlite.Row]:
@@ -1456,7 +1480,7 @@ class Database:
     async def leaderboard(self, basis: str = "level", period: str = "all") -> list[aiosqlite.Row]:
         since: str | None = None
         if period == "daily":
-            since = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
+            since = tehran_now().replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC).isoformat(timespec="seconds")
         elif period == "monthly":
             since = (datetime.now(UTC) - timedelta(days=30)).isoformat(timespec="seconds")
         if basis == "league":
@@ -1488,7 +1512,7 @@ class Database:
 
         since: str | None = None
         if period == "daily":
-            since = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
+            since = tehran_now().replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC).isoformat(timespec="seconds")
         elif period == "monthly":
             since = (datetime.now(UTC) - timedelta(days=30)).isoformat(timespec="seconds")
 

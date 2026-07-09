@@ -32,6 +32,13 @@ def back_home_keyboard() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
+def profile_refresh_keyboard() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="🔄 آپدیت پروفایل", callback_data="profile:refresh")
+    b.adjust(1)
+    return b.as_markup()
+
+
 def duel_menu(random_cost: int = 5, bot_cost: int = 3, free_chat_enabled: bool = False) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text=f"🎲 دوئل شانسی — {random_cost} سکه", callback_data="duel:random")

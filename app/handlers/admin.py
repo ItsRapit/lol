@@ -19,7 +19,6 @@ from app.keyboards import (
 from app.states import AdminFlow, BulkQuestionImport, ShopPackageFlow, LeagueFlow, DiscountFlow, QuestionCleanupFlow, QuestionEditFlow, TitleFlow
 from app.bulk_questions import parse_bulk_questions, format_bulk_report, bulk_help_text, extract_json_text, is_json_balanced, looks_like_json, looks_like_bulk_text
 from app.time_utils import tehran_now, jalali_datetime
-from app.notifications import run_edit_animation, levelup_steps, rankup_steps, title_steps, demotion_steps
 from app.clean_questions import get_filter_words, get_clean_stats, clean_duplicate_questions
 
 logger = logging.getLogger(__name__)
@@ -115,6 +114,47 @@ async def maintenance_command(message: Message, db: Database, bot: Bot) -> None:
     except Exception:
         logger.exception("Maintenance command failed")
         await message.answer("خطا در تغییر حالت تعمیر.")
+
+
+@router.message(Command("deletequestions"))
+async def delete_questions_command(message: Message, db: Database) -> None:
+    try:
+        if not await require_admin_message(message, db):
+            return
+        parts = (message.text or "").split(maxsplit=1)
+        if len(parts) != 2 or not parts[1].strip():
+            await message.answer("فرمت درست:\n/deletequestions 48,465,1246,45")
+            return
+        raw_ids = [p.strip() for p in parts[1].replace("،", ",").split(",") if p.strip()]
+        valid_ids: list[int] = []
+        invalid_tokens: list[str] = []
+        for token in raw_ids:
+            if token.isdigit():
+                valid_ids.append(int(token))
+            else:
+                invalid_tokens.append(token)
+        if not valid_ids:
+            await message.answer("هیچ آیدی معتبری پیدا نشد.")
+            return
+        deleted = 0
+        not_found: list[int] = []
+        for qid in valid_ids:
+            existing = await db.get_question(qid)
+            if not existing:
+                not_found.append(qid)
+                continue
+            await db.delete_question(qid)
+            deleted += 1
+        await db.log_admin(message.from_user.id, "bulk_delete_questions", details=f"deleted={deleted} ids={valid_ids}")
+        lines = [f"✅ {deleted} سوال حذف شد"]
+        if not_found:
+            lines.append(f"⚠️ پیدا نشد: {', '.join(map(str, not_found))}")
+        if invalid_tokens:
+            lines.append(f"⚠️ نامعتبر: {', '.join(invalid_tokens)}")
+        await message.answer("\n".join(lines))
+    except Exception:
+        logger.exception("Bulk delete questions failed")
+        await message.answer("خطا در حذف سوالات.")
 
 
 @router.message(Command("backup"))
@@ -1730,13 +1770,17 @@ async def animation_preview_callback(call: CallbackQuery, db: Database, bot: Bot
             return
         kind = call.data.split(":", 1)[1]
         if kind == "level":
-            await run_edit_animation(bot, call.from_user.id, await levelup_steps(5, 6), 0.6)
+            text = await db.get_setting("level_up_message", "🎉 <b>لول‌آپ!</b>\n━━━━━━━━━━━━━━\n🚀 رسیدی به لول {level}\n━━━━━━━━━━━━━━")
+            await bot.send_message(call.from_user.id, text.format(level=6))
         elif kind == "rank":
-            await run_edit_animation(bot, call.from_user.id, await rankup_steps("🥉 برنزی 3", "🥈 نقره‌ای 1", 5, 6, True), 0.6)
+            text = await db.get_setting("rank_up_message", "👑 <b>ترفیع رنک!</b>\n━━━━━━━━━━━━━━\n🏆 رسیدی به {rank}\n━━━━━━━━━━━━━━")
+            await bot.send_message(call.from_user.id, text.format(rank="🥈 نقره‌ای 1", level=6))
         elif kind == "title":
-            await run_edit_animation(bot, call.from_user.id, await title_steps(db, "بدون لقب", "⚔️ شکارچی", "🥉 برنزی 3", "🥈 نقره‌ای 1", 5, 6, True, True), 0.6)
+            text = await db.get_setting("new_title_message", "🏅 <b>لقب جدید!</b>\n━━━━━━━━━━━━━━\n✨ به {title} رسیدی ✨\n━━━━━━━━━━━━━━")
+            await bot.send_message(call.from_user.id, text.format(title="⚔️ شکارچی", level=6, rank="🥈 نقره‌ای 1"))
         elif kind == "down":
-            await run_edit_animation(bot, call.from_user.id, await demotion_steps("🥈 نقره‌ای 1", "🥉 برنزی 3"), 0.6)
+            text = await db.get_setting("rank_down_message", "📉 سقوط رنک\nرفتی تو {rank}\nولی هنوز وقت هست 💪")
+            await bot.send_message(call.from_user.id, text.format(rank="🥉 برنزی 3", level=5))
     except Exception:
         logger.exception("Animation preview failed")
-        await call.message.answer("خطا در پیش‌نمایش انیمیشن.")
+        await call.message.answer("خطا در پیش‌نمایش پیام.")

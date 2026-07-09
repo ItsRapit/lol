@@ -921,21 +921,13 @@ async def resolve_group_question(bot: Bot, db: Database, game: GroupGame, idx: i
                 logger.exception("Could not show group question error")
 
 
-async def notify_levelup_in_group(bot: Bot, chat_id: int, username: str, old_level: int, new_level: int, new_title: str) -> None:
-    frames = [
-        "⬆️ ...",
-        "⬆️⬆️ ...",
-        "⬆️⬆️⬆️ ...",
-        f"🎉 تبریک {username}\nرسیدی به لول {new_level}\n{new_title}",
-    ]
+async def notify_levelup_in_group(bot: Bot, db: Database, chat_id: int, username: str, old_level: int, new_level: int, new_title: str) -> None:
     try:
-        msg = await bot.send_message(chat_id, frames[0])
-        for frame in frames[1:]:
-            await asyncio.sleep(0.6)
-            try:
-                await msg.edit_text(frame)
-            except Exception:
-                logger.debug("Group levelup animation edit skipped", exc_info=True)
+        text = await db.get_setting(
+            "group_level_up_message",
+            "🎉 <b>لول‌آپ!</b>\n━━━━━━━━━━━━━━\n{username} رسید به لول {level}\n{title}\n━━━━━━━━━━━━━━",
+        )
+        await bot.send_message(chat_id, text.format(username=username, level=new_level, title=new_title))
     except Exception:
         logger.exception("Group levelup notification failed")
 
@@ -983,7 +975,7 @@ async def finish_group_game(bot: Bot, db: Database, game: GroupGame) -> None:
     await db.activate_referrals_for_players(list(game.lobby.players.keys()))
     if game.lobby.chat_id:
         for _, mention, old_level, new_level, title_text in levelups:
-            await notify_levelup_in_group(bot, game.lobby.chat_id, mention, old_level, new_level, title_text)
+            await notify_levelup_in_group(bot, db, game.lobby.chat_id, mention, old_level, new_level, title_text)
             await asyncio.sleep(1)
     games.pop(game.lobby.lobby_id, None)
     lobbies.pop(game.lobby.lobby_id, None)

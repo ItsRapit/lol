@@ -4,7 +4,7 @@ from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from app.db import Database, now_iso
-from app.keyboards import main_menu, leaderboard_basis_keyboard, leaderboard_period_keyboard, CANCEL_TEXT, back_home_keyboard, quests_keyboard
+from app.keyboards import main_menu, leaderboard_basis_keyboard, leaderboard_period_keyboard, CANCEL_TEXT, back_home_keyboard, quests_keyboard, profile_refresh_keyboard
 from app.utils import ensure_user, xp_progress_text, rtl_line, to_english_digits, league_with_emoji, rank_with_emoji
 from app.notifications import send_streak_notification
 from app.time_utils import jalali_date, jalali_datetime
@@ -127,10 +127,22 @@ async def nav_home(call: CallbackQuery, state: FSMContext, db: Database) -> None
 async def profile(message: Message, db: Database) -> None:
     try:
         await db.upsert_user(message.from_user.id, message.from_user.username, message.from_user.first_name, from_pv=True)
-        await message.answer(await build_profile_text(db, message.from_user.id))
+        await db.sync_user_title(message.from_user.id)
+        await message.answer(await build_profile_text(db, message.from_user.id), reply_markup=profile_refresh_keyboard())
     except Exception:
         logger.exception("Profile failed")
         await message.answer("خطا در نمایش پروفایل.")
+
+
+@router.callback_query(F.data == "profile:refresh")
+async def profile_refresh(call: CallbackQuery, db: Database) -> None:
+    try:
+        await db.sync_user_title(call.from_user.id)
+        await call.message.edit_text(await build_profile_text(db, call.from_user.id), reply_markup=profile_refresh_keyboard())
+        await call.answer("✅ پروفایل آپدیت شد", show_alert=False)
+    except Exception:
+        logger.exception("Profile refresh failed")
+        await call.answer("خطا در آپدیت پروفایل", show_alert=True)
 
 
 @router.message(F.text == "🏆 لیدربورد")
