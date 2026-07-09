@@ -93,13 +93,19 @@ def league_with_emoji(name: str | None) -> str:
 def rank_with_emoji(title: str | None) -> str:
     title = title or "بدون رتبه"
     mapping = {
-        "تازه‌کار": "🌱",
-        "دانشجو": "📘",
-        "استاد": "🎓",
-        "قهرمان": "🏆",
-        "اسطوره": "👑",
-        "افسانه‌ای": "🔥",
-        "مکس لول": "💫",
+        "Noob": "⚪",
+        "Rookie": "🟢",
+        "Novice": "🔵",
+        "Challenger": "🟣",
+        "Veteran": "🟠",
+        "Elite": "🔴",
+        "Master": "🟡",
+        "Grandmaster": "💠",
+        "Champion": "🔶",
+        "Legend": "💎",
+        "Mythic": "👑",
+        "Immortal": "⚡",
+        "God of Challeshino": "🌟",
     }
     return f"{mapping.get(title, '🏅')} {title}"
 

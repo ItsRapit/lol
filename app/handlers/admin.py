@@ -718,17 +718,18 @@ async def admin_callback(call: CallbackQuery, db: Database, state: FSMContext, b
             await call.message.answer("📊 آمار و بک‌آپ", reply_markup=admin_submenu_keyboard('reports'))
         elif action == 'reset_ranks_xp':
             summary = await db.reset_ranks_and_xp_to_factory()
-            await db.log_admin(call.from_user.id, "reset_ranks_xp")
+            await db.log_admin(call.from_user.id, "reset_ranks_xp", details=f"users_changed={summary['users_changed']}/{summary['users_total']}")
+            titles_lines = "\n".join(f"لول {min_lvl}+: {emoji} {name}" for name, emoji, min_lvl, _desc in summary['titles'])
             await call.message.answer(
-                "🏭 رنک‌ها و ایکس‌پی به تنظیمات فابریک برگشتن.\n\n"
-                f"🏅 رنک‌ها ({len(summary['ranks'])}):\n" +
-                "\n".join(f"لول {min_lvl}+: {title}" for min_lvl, title in summary['ranks']) +
-                f"\n\n🎚 حداکثر لول: {summary['max_level']}\n"
-                f"📈 ضریب منحنی ایکس‌پی: {summary['xp_level_curve_factor']}",
+                "🏭 رنک‌ها، لقب‌ها و منحنی ایکس‌پی به تنظیمات فابریک برگشتن.\n\n"
+                f"🏅 لقب‌ها:\n{titles_lines}\n\n"
+                f"🎚 حداکثر لول: {summary['max_level']}\n"
+                f"📈 مجموع ایکس‌پی لازم تا لول {summary['max_level']}: {summary['total_xp_at_max_level']:,}\n\n"
+                f"👥 لول و لقب {summary['users_changed']} از {summary['users_total']} بازیکن آپدیت شد.",
                 reply_markup=admin_submenu_keyboard('league'),
             )
         elif action == 'animation_preview':
-            await call.message.answer("🎬 پیش‌نمایش انیمیشن‌ها", reply_markup=animation_preview_keyboard())
+            await call.message.answer("🔔 پیش‌نمایش پیام سطح/رنک/لقب", reply_markup=animation_preview_keyboard())
         elif action == 'titles':
             await call.message.answer("🏅 مدیریت لقب‌ها", reply_markup=titles_menu_keyboard())
         elif action == 'question_lookup_help':
@@ -1720,11 +1721,11 @@ async def title_callback(call: CallbackQuery, db: Database, state: FSMContext) -
         elif action == "delete_help":
             await call.message.answer("برای حذف لقب بزن: <code>/deltitle ID</code>")
         elif action == "update_all":
-            await call.message.answer("⏳ در حال آپدیت لقب همه بازیکنان...")
+            await call.message.answer("⏳ در حال آپدیت لول و لقب همه بازیکنان...")
             result = await db.sync_all_titles()
             await db.log_admin(call.from_user.id, "title_update_all", details=f"changed={result['changed']}/{result['total']}")
             await call.message.answer(
-                f"✅ آپدیت لقب‌ها انجام شد.\n👥 کل کاربران: {result['total']}\n🔄 لقب تغییرکرده: {result['changed']}",
+                f"✅ آپدیت لول و لقب همه بازیکنان انجام شد.\n👥 کل کاربران: {result['total']}\n🔄 لقب تغییرکرده: {result['changed']}",
                 reply_markup=titles_menu_keyboard(),
             )
     except Exception:

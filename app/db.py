@@ -20,9 +20,27 @@ CANONICAL_GENRES = [
     "طبیعت و جاندار", "معما و هوش", "ادیان", "خودرو و وسایل نقلیه",
     "زبان انگلیسی", "بازی‌های ویدیویی",
 ]
-FACTORY_RANKS = [(1, "تازه‌کار"), (5, "دانشجو"), (10, "استاد"), (20, "قهرمان"), (35, "اسطوره"), (70, "افسانه‌ای"), (100, "مکس لول")]
+FACTORY_RANKS = [
+    (1, "Noob"), (5, "Rookie"), (10, "Novice"), (15, "Challenger"), (20, "Veteran"),
+    (30, "Elite"), (40, "Master"), (50, "Grandmaster"), (60, "Champion"), (70, "Legend"),
+    (80, "Mythic"), (90, "Immortal"), (100, "God of Challeshino"),
+]
+FACTORY_TITLES = [
+    ("Noob", "⚪", 1, "شروع مسیر"),
+    ("Rookie", "🟢", 5, "اولین قدم‌های جدی"),
+    ("Novice", "🔵", 10, "بازیکن باتجربه"),
+    ("Challenger", "🟣", 15, "آماده‌ی چالش‌های سخت‌تر"),
+    ("Veteran", "🟠", 20, "کهنه‌کار میدون"),
+    ("Elite", "🔴", 30, "جزو بهترین‌ها"),
+    ("Master", "🟡", 40, "استاد بازی"),
+    ("Grandmaster", "💠", 50, "استاد بزرگ"),
+    ("Champion", "🔶", 60, "قهرمان بی‌رقیب"),
+    ("Legend", "💎", 70, "افسانه‌ی چالشینو"),
+    ("Mythic", "👑", 80, "در سطح اسطوره‌ای"),
+    ("Immortal", "⚡", 90, "جاودانه‌ی بازی"),
+    ("God of Challeshino", "🌟", 100, "خدای چالشینو"),
+]
 FACTORY_MAX_LEVEL = "100"
-FACTORY_XP_LEVEL_CURVE_FACTOR = "112"
 
 GENRE_ALIASES = {"🎲 اطلاعات عمومی": "علم و دانش", "اطلاعات عمومی": "علم و دانش", "عمومی": "علم و دانش", "فناوری": "تکنولوژی", "طبیعت": "طبیعت و جاندار", "حیوانات": "طبیعت و جاندار", "خودرو": "خودرو و وسایل نقلیه", "ماشین": "خودرو و وسایل نقلیه", "سرگرمی": "لوگو و سرگرمی", "لوگو": "لوگو و سرگرمی", "غذا": "غذا و نوشیدنی", "هوش": "معما و هوش", "معما": "معما و هوش", "مذهبی": "ادیان", "انگلیسی": "زبان انگلیسی", "زبان": "زبان انگلیسی", "گیم": "بازی‌های ویدیویی", "بازی ویدیویی": "بازی‌های ویدیویی", "ویدیوگیم": "بازی‌های ویدیویی"}
 
@@ -452,15 +470,6 @@ class Database:
             "force_join_enabled": ("0", "Enable force join channel before games"),
             "force_join_channel": ("", "Force join channel username or id"),
             "question_filter_words": ("ربات,ماشین,بازی", "Comma-separated words for question cleanup"),
-            "levelup_anim1_step1": ("⬆️ داری لول آپ می‌کنی...", "Level-up animation 1 step 1"),
-            "levelup_anim1_step2": ("⬆️⬆️ داری لول آپ می‌کنی...", "Level-up animation 1 step 2"),
-            "levelup_anim1_step3": ("🎉 لول آپ!\nبه {level_name} رسیدی!\nرسیدی به لول {new_level}", "Level-up animation 1 final"),
-            "levelup_anim2_step1": ("💪 داری قوی‌تر می‌شی...", "Level-up animation 2 step 1"),
-            "levelup_anim2_step2": ("💪💪 داری قوی‌تر می‌شی...", "Level-up animation 2 step 2"),
-            "levelup_anim2_step3": ("🚀 ارتقا!\n{level_name} شدی!\nرسیدی به لول {new_level}", "Level-up animation 2 final"),
-            "rank_change_anim_step1": ("✨ یه اتفاق خاص داره می‌افته...", "Rank/league change animation step 1"),
-            "rank_change_anim_step2": ("✨🌟 یه اتفاق خاص داره می‌افته...", "Rank/league change animation step 2"),
-            "rank_change_anim_step3": ("👑 رتبه‌ات عوض شد!\n{old_rank} ← {new_rank}\nلول {new_level}", "Rank/league change animation final"),
             "level_up_message": ("🎉 <b>لول‌آپ!</b>\n━━━━━━━━━━━━━━\n🚀 رسیدی به لول {level}\n━━━━━━━━━━━━━━", "PV level-up message"),
             "rank_up_message": ("👑 <b>ترفیع رنک!</b>\n━━━━━━━━━━━━━━\n🏆 رسیدی به {rank}\n━━━━━━━━━━━━━━", "PV rank/league promotion message"),
             "rank_down_message": ("📉 سقوط رنک\nرفتی تو {rank}\nولی هنوز وقت هست 💪", "PV rank/league demotion message"),
@@ -475,7 +484,6 @@ class Database:
             "welcome_text": ("سلام! به ربات کوییز دوئلی خوش آمدی. از منوی پایین انتخاب کن:", "Editable /start welcome text"),
             "help_text": ("🎮 راهنمای ربات\n\n━━━━━━━━━━━━━━━\n👥 بازی گروهی\n━━━━━━━━━━━━━━━\nآیدی ربات رو تو هر چتی سرچ کن و مستقیم همون‌جا با بچه‌های گروه بازی کن.\n\n━━━━━━━━━━━━━━━\n🕹 بازی\n━━━━━━━━━━━━━━━\n🎲 دوئل شانسی — با یه حریف تصادفی بازی می‌کنی ({random_duel_cost} سکه)\n🤖 دوئل با ربات — همیشه در دسترسه، هر بار سطح ربات فرق می‌کنه، خودتم نمی‌فهمی چقدر سختـه ({bot_duel_cost} سکه)\nقبل شروع باید ژانر رو انتخاب کنی، سوالا فقط از ژانرهایی میان که هر دوتون زدید.\n\n━━━━━━━━━━━━━━━\n🎯 کوئست روزانه\n━━━━━━━━━━━━━━━\nهر روز ۳ تا کوئست جدید داری. کاملشون کن، برو جایزه بگیر.\n\n━━━━━━━━━━━━━━━\n🏆 رقابت\n━━━━━━━━━━━━━━━\nهر برد جام و XP میده، با جام میری بالاتر توی لیگ‌ها:\nبرنزی ← نقره‌ای ← طلایی ← الماسی ← اسطوره‌ای\nهر لیگ ۳ تا تیر داره. هرچی بری بالاتر، باخت گرون‌تر میشه.\n\n━━━━━━━━━━━━━━━\n🪙 سکه\n━━━━━━━━━━━━━━━\nبا بازی و برد سکه جمع می‌کنی. توی دوئل می‌تونی از پاورآپ استفاده کنی.\nاز فروشگاه هم میشه سکه خرید.\nهمین اول {initial_signup_coins} سکه هدیه‌ی خوش‌اومدیه، مال خودته.\n\n━━━━━━━━━━━━━━━\n🔥 استریک روزانه\n━━━━━━━━━━━━━━━\nهفته اول هر روز وارد بشی سکه می‌گیری، روز اول {streak_day_1_coins} تا، روز هفتم {streak_day_7_coins} تا.\nیه روز جا بندازی، استریک قطع میشه.\n\n━━━━━━━━━━━━━━━\n👥 رفرال\n━━━━━━━━━━━━━━━\nلینک دعوتت رو از بخش رفرال بردار بده به دوستت.\nاولین بازیش که تموم شه:\n• تو {referral_referrer_coins} سکه + {referral_referrer_xp} XP می‌گیری\n• اونم {referral_referred_coins} سکه + {referral_referred_xp} XP هدیه می‌گیره\n\n━━━━━━━━━━━━━━━\n📋 سوال بده\n━━━━━━━━━━━━━━━\nسوال جدید داری؟ بفرست. ادمین تایید کنه میره تو بازی.", "Editable /help text with placeholders"),
             "max_level": ("100", "Maximum level"),
-            "xp_level_curve_factor": ("112", "Quadratic XP curve factor; cumulative XP for level L is factor*(L-1)^2"),
             "start_photo_file_id": ("", "Optional photo file_id for /start"),
             "random_duel_cost": ("5", "Coins charged for random matchmaking entry"),
             "bot_duel_cost": ("3", "Coins charged for a duel against the bot opponent"),
@@ -503,6 +511,15 @@ class Database:
         for k, (v, d) in defaults.items():
             await self.execute_write("INSERT OR IGNORE INTO settings(key,value,description) VALUES(?,?,?)", (k, v, d))
         await self.execute_write("DELETE FROM settings WHERE key='friendly_duel_cost'")
+        await self.execute_write(
+            "DELETE FROM settings WHERE key IN (" + ",".join("?" for _ in range(9)) + ")",
+            (
+                "levelup_anim1_step1", "levelup_anim1_step2", "levelup_anim1_step3",
+                "levelup_anim2_step1", "levelup_anim2_step2", "levelup_anim2_step3",
+                "rank_change_anim_step1", "rank_change_anim_step2", "rank_change_anim_step3",
+            ),
+        )
+        await self.execute_write("DELETE FROM settings WHERE key='xp_level_curve_factor'")
         old_help = await self.get_setting("help_text", "")
         if old_help.startswith("راهنما:\n⚔️ دوئل") or "Streak روزانه" in old_help or "دعوت دوست" in old_help or "راهنمای کامل ربات کوییز دوئلی" in old_help:
             await self.set_setting("help_text", defaults["help_text"][0])
@@ -526,21 +543,7 @@ class Database:
         if title_count and title_count["c"] == 0:
             await self.executemany_write(
                 "INSERT INTO titles(name,emoji,min_level,description,created_at) VALUES(?,?,?,?,?)",
-                [
-                    ("Noob", "⚪", 1, "شروع مسیر", now_iso()),
-                    ("Rookie", "🟢", 5, "اولین قدم‌های جدی", now_iso()),
-                    ("Novice", "🔵", 10, "بازیکن باتجربه", now_iso()),
-                    ("Challenger", "🟣", 15, "آماده‌ی چالش‌های سخت‌تر", now_iso()),
-                    ("Veteran", "🟠", 20, "کهنه‌کار میدون", now_iso()),
-                    ("Elite", "🔴", 30, "جزو بهترین‌ها", now_iso()),
-                    ("Master", "🟡", 40, "استاد بازی", now_iso()),
-                    ("Grandmaster", "💠", 50, "استاد بزرگ", now_iso()),
-                    ("Champion", "🔶", 60, "قهرمان بی‌رقیب", now_iso()),
-                    ("Legend", "💎", 70, "افسانه‌ی چالشینو", now_iso()),
-                    ("Mythic", "👑", 80, "در سطح اسطوره‌ای", now_iso()),
-                    ("Immortal", "⚡", 90, "جاودانه‌ی بازی", now_iso()),
-                    ("God of Challeshino", "🌟", 100, "خدای چالشینو", now_iso()),
-                ],
+                [(name, emoji, min_level, desc, now_iso()) for name, emoji, min_level, desc in FACTORY_TITLES],
             )
         for i, genre in enumerate(CANONICAL_GENRES):
             await self.execute_write("INSERT OR IGNORE INTO genres(name,is_active,sort_order) VALUES(?,?,?)", (genre, 1, i))
@@ -937,36 +940,52 @@ class Database:
         return old, new, changed
 
     async def sync_all_titles(self) -> dict[str, int]:
-        """Recompute and apply the correct title for every existing user.
+        """Recompute every user's level (from their XP under the current curve)
+        and their title (from that level), for all users at once.
 
-        Useful right after an admin adds/edits/deletes title definitions, so
-        everyone's title reflects the new rules immediately instead of only
-        updating the next time a user levels up.
+        Useful after an admin edits title definitions or the XP/level curve,
+        so everyone's level and title reflect the new rules immediately
+        instead of only updating the next time they gain XP.
         """
         ids = await self.all_user_ids(exclude_blocked=False)
         changed = 0
         for tg_id in ids:
+            await self.recalculate_level(tg_id)
             _old, _new, did_change = await self.sync_user_title(tg_id)
             if did_change:
                 changed += 1
         return {"total": len(ids), "changed": changed}
 
     async def reset_ranks_and_xp_to_factory(self) -> dict[str, Any]:
-        """Force ranks + level/XP curve settings back to their factory defaults.
+        """Force ranks, titles, and the level/XP curve back to factory defaults.
 
         Unlike seed_defaults() (which only fills in missing rows/keys), this
         overwrites any admin edits on purpose, since it is an explicit
-        "restore factory settings" action.
+        "restore factory settings" action. It also immediately recalculates
+        every user's level and title so nothing is left stale.
         """
         await self.execute_write("DELETE FROM ranks")
         for min_level, title in FACTORY_RANKS:
             await self.execute_write("INSERT INTO ranks(min_level,title) VALUES(?,?)", (min_level, title))
+
+        await self.execute_write("DELETE FROM titles")
+        for name, emoji, min_level, desc in FACTORY_TITLES:
+            await self.add_title(name, emoji, min_level, desc)
+
         await self.set_setting("max_level", FACTORY_MAX_LEVEL)
-        await self.set_setting("xp_level_curve_factor", FACTORY_XP_LEVEL_CURVE_FACTOR)
+        max_level = int(FACTORY_MAX_LEVEL)
+        for level in range(1, max_level + 1):
+            await self.set_level_config(level, None, None, self.new_curve_cumulative_xp(level))
+
+        sync_result = await self.sync_all_titles()
+
         return {
             "ranks": FACTORY_RANKS,
+            "titles": FACTORY_TITLES,
             "max_level": FACTORY_MAX_LEVEL,
-            "xp_level_curve_factor": FACTORY_XP_LEVEL_CURVE_FACTOR,
+            "total_xp_at_max_level": self.new_curve_cumulative_xp(max_level),
+            "users_total": sync_result["total"],
+            "users_changed": sync_result["changed"],
         }
 
     async def titles(self) -> list[aiosqlite.Row]:

@@ -151,7 +151,7 @@ def admin_panel() -> InlineKeyboardMarkup:
         ("📣 اعلان‌ها و متن‌ها", "admin:notifications"),
         ("🛠 سیستم و امنیت", "admin:system_settings"),
         ("📊 آمار و بک‌آپ", "admin:stats_reports"),
-        ("🎬 پیش‌نمایش انیمیشن‌ها", "admin:animation_preview"),
+        ("🔔 پیش‌نمایش پیام سطح/رنک/لقب", "admin:animation_preview"),
     ]:
         b.button(text=text, callback_data=data)
     b.adjust(1)
@@ -397,10 +397,10 @@ def titles_menu_keyboard() -> InlineKeyboardMarkup:
 
 def animation_preview_keyboard() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="🎬 لول‌آپ ساده — متن A/B", callback_data="animprev:level")
-    b.button(text="🎬 رنک‌آپ", callback_data="animprev:rank")
-    b.button(text="🎬 لقب جدید", callback_data="animprev:title")
-    b.button(text="🎬 لیگ‌داون", callback_data="animprev:down")
+    b.button(text="🎉 پیام لول‌آپ", callback_data="animprev:level")
+    b.button(text="👑 پیام ترفیع رنک", callback_data="animprev:rank")
+    b.button(text="🏅 پیام لقب جدید", callback_data="animprev:title")
+    b.button(text="📉 پیام سقوط رنک", callback_data="animprev:down")
     b.button(text="🔙 بازگشت", callback_data="admin:back")
     b.adjust(1)
     return b.as_markup()
@@ -568,7 +568,11 @@ SETTING_LABELS = {
     "group_quiz_timer_seconds": "زمان سوال بازی گروهی",
     "group_quiz_entry_cost": "هزینه ورود بازی گروهی",
     "max_level": "حداکثر لول",
-    "xp_level_curve_factor": "ضریب منحنی ایکس‌پی قدیمی",
+    "level_up_message": "متن لول‌آپ",
+    "rank_up_message": "متن ترفیع رنک",
+    "rank_down_message": "متن سقوط رنک",
+    "new_title_message": "متن لقب جدید",
+    "group_level_up_message": "متن لول‌آپ (گروه)",
     "genre_stats_min_answers": "حداقل پاسخ برای تحلیل ژانر",
     "payment_card_number": "شماره کارت",
     "payment_card_holder": "نام صاحب کارت",
@@ -617,13 +621,14 @@ SETTING_CATEGORIES = {
         "group_quiz_max_players", "group_quiz_question_count", "group_quiz_timer_seconds", "group_quiz_entry_cost",
     ]),
     "level": ("🏆 لول، لیگ و تحلیل", [
-        "max_level", "xp_level_curve_factor", "genre_stats_min_answers",
+        "max_level", "genre_stats_min_answers",
     ]),
     "shop": ("🛒 فروشگاه و پرداخت", [
         "payment_card_number", "payment_card_holder", "payment_method",
     ]),
     "texts": ("📝 متن‌ها و پیام‌ها", [
         "welcome_text", "help_text", "maintenance_text", "contact_admin_id",
+        "level_up_message", "rank_up_message", "rank_down_message", "new_title_message", "group_level_up_message",
     ]),
     "system": ("🛠 سیستم و امنیت", [
         "maintenance_mode", "force_join_enabled", "force_join_channel", "start_photo_file_id",
