@@ -105,8 +105,6 @@ def player_progress_lines(game: GroupGame, current_idx: int) -> str:
 
 def group_question_text(game: GroupGame, idx: int, remaining: int, total_seconds: int, resolved: bool = False) -> str:
     q = game.questions[idx]
-    answered_count = len(game.answered.get(idx, {}))
-    total = len(game.lobby.players)
     if resolved:
         opts = [q['option1'], q['option2'], q['option3'], q['option4']]
         correct = opts[int(q['correct_option']) - 1]
@@ -119,8 +117,7 @@ def group_question_text(game: GroupGame, idx: int, remaining: int, total_seconds
     return (
         f"❓ سوال {idx+1} از {len(game.questions)}\n\n"
         f"{q['text']}\n\n"
-        f"{player_progress_lines(game, idx)}\n"
-        f"✅ {answered_count}/{total} نفر جواب دادن"
+        f"{player_progress_lines(game, idx)}"
     )
 
 def group_duel_genre_keyboard(lobby_id: str, genres: list[str], selected: dict[int, str] | None = None) -> InlineKeyboardMarkup:
