@@ -388,8 +388,8 @@ async def close_all_games_for_maintenance(bot: Bot) -> int:
 
 def quiz_menu_keyboard(starter_id: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
+    b.button(text="⚔️ دوئل", callback_data=f"quizmenu:duel:{starter_id}")
     b.button(text="🎮 بازی گروهی", callback_data=f"quizmenu:group:{starter_id}")
-    b.button(text="⚔️ دوئل گروهی", callback_data=f"quizmenu:duel:{starter_id}")
     b.adjust(2)
     return b.as_markup()
 
@@ -426,10 +426,10 @@ async def group_quiz_start(message: Message, db: Database, bot: Bot) -> None:
         return
     await message.answer(
         "🎮 چالشینو\n\n"
-        "🎮 بازی گروهی\n"
-        "سوالاتی نمایش داده میشه، در آخر هرکی سوالات بیشتری جواب داد برنده‌ست(ژانر توسط سازنده انتخاب میشه)\n\n"
         "⚔️ دوئل\n"
         "دو نفر باهم مبارزه میکنن، هر کدوم یک ژانر انتخاب میکنن که از اون سوال میاد(به صورت شانسی از هر دو ژانر انتخابی)\n\n"
+        "🎮 بازی گروهی\n"
+        "سوالاتی نمایش داده میشه، در آخر هرکی سوالات بیشتری جواب داد برنده‌ست(ژانر توسط سازنده انتخاب میشه)\n\n"
         "کدوم رو می‌خوای شروع کنی؟",
         reply_markup=quiz_menu_keyboard(message.from_user.id),
     )
@@ -468,9 +468,7 @@ async def quiz_menu_choice(call: CallbackQuery, db: Database, bot: Bot) -> None:
             lobbies[lobby_id] = lobby
             await call.message.edit_text(
                 f"⚔️ دوئل چالشینو\n\n👤 چالش‌دهنده: {trim_name(call.from_user.full_name)}\n\nمنتظر حریف...",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(text="⚔️ قبول می‌کنم", callback_data="group_duel_accept"),
-                ]]),
+                reply_markup=group_duel_lobby_keyboard(),
             )
             lobby.message_id = call.message.message_id
             lobby.timeout_task = asyncio.create_task(lobby_timeout(lobby_id, bot))
@@ -519,9 +517,7 @@ async def inline_handler(query: InlineQuery, db: Database) -> None:
             input_message_content=InputTextMessageContent(
                 message_text=f"⚔️ دوئل چالشینو\n\n👤 چالش‌دهنده: {name}\n\nمنتظر حریف..."
             ),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="⚔️ قبول می‌کنم", callback_data="group_duel_accept"),
-            ]]),
+            reply_markup=group_duel_lobby_keyboard(),
         )
         await query.answer([result, duel_result], cache_time=0)
     except Exception as e:
@@ -556,9 +552,7 @@ async def chosen_result_handler(chosen: ChosenInlineResult, bot: Bot, db: Databa
         try:
             await bot.edit_message_reply_markup(
                 inline_message_id=chosen.inline_message_id,
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(text="⚔️ قبول می‌کنم", callback_data="group_duel_accept"),
-                ]]),
+                reply_markup=group_duel_lobby_keyboard(),
             )
         except Exception:
             logger.exception("Could not ensure group duel lobby leave button")
